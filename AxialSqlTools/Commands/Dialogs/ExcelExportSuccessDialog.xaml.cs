@@ -29,7 +29,7 @@ namespace AxialSqlTools
         {
             if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             {
-                MessageBox.Show(this, "The exported file could not be found.", "Open in Excel", MessageBoxButton.OK, MessageBoxImage.Warning);
+                LocalizedMessageBox.Show(this, "The exported file could not be found.", "Open in Excel", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -46,7 +46,7 @@ namespace AxialSqlTools
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Unable to open the exported file in Excel.\n\n" + ex.Message, "Open in Excel", MessageBoxButton.OK, MessageBoxImage.Error);
+                LocalizedMessageBox.Show(this, "Unable to open the exported file in Excel.\n\n" + ex.Message, "Open in Excel", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 

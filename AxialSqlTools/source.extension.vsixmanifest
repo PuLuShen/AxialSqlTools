@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
-        <Identity Id="AxialSqlTools" Version="4.12" Language="en-US" Publisher="Alex Bochkov" />
+        <Identity Id="AxialSqlTools" Version="4.19" Language="zh-CN" Publisher="Alex Bochkov" />
         <DisplayName>Axial SQL Tools</DisplayName>
-        <Description xml:space="preserve">Axial SQL Tools | SQL Server Management Studio 22 Productivity Addin</Description>
+        <Description xml:space="preserve">Axial SQL Tools | SQL Server Management Studio 22 效率扩展</Description>
         <MoreInfo>https://github.com/Axial-SQL/AxialSqlTools</MoreInfo>
         <License>LICENSE</License>
         <GettingStartedGuide>https://github.com/Axial-SQL/AxialSqlTools/wiki</GettingStartedGuide>

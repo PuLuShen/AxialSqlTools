@@ -83,14 +83,14 @@
       <Menu guid="guidAxialSqlToolsPackageCmdSet" id="AxialQueryTemplatesSubMenu" type="Menu" priority="0x0000">
         <Parent guid="guidAxialSqlToolsPackageCmdSet" id="AxialToolbarGroup" />
         <Strings>
-          <ButtonText>Query Templates</ButtonText>
+          <ButtonText>查询模板</ButtonText>
         </Strings>
       </Menu>
       
       <Menu guid="guidAxialSqlToolsPackageCmdSet" id="AxialToolsSubMenu" type="Menu" priority="0x0000">
         <Parent guid="guidAxialSqlToolsPackageCmdSet" id="AxialToolbarGroup" />
         <Strings>
-          <ButtonText>Tools</ButtonText>
+          <ButtonText>工具</ButtonText>
         </Strings>
       </Menu>
       
@@ -118,9 +118,9 @@
         <Icon guid="guidImagesMagicWand" id="bmpMagicWand" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Format Query</ButtonText>
+          <ButtonText>格式化查询</ButtonText>
           <LocCanonicalName>AxialSqlTools.FormatQuery</LocCanonicalName>
-          <ToolTipText>Format SQL query (hold Shift for advanced options)</ToolTipText>
+          <ToolTipText>格式化 SQL 查询（按住 Shift 可打开高级选项）</ToolTipText>
         </Strings>
       </Button>
       
@@ -130,7 +130,7 @@
         <Icon guid="guidExportData" id="bmpExportData" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Export Grid to Excel</ButtonText>
+          <ButtonText>将结果网格导出到 Excel</ButtonText>
           <LocCanonicalName>AxialSqlTools.ExportGridToExcel</LocCanonicalName>
         </Strings>
       </Button>
@@ -140,7 +140,7 @@
         <Icon guid="guidExportGridToEmail" id="bmpExportGridToEmail" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Export Grid to Email</ButtonText>
+          <ButtonText>通过邮件发送结果网格</ButtonText>
           <LocCanonicalName>AxialSqlTools.ExportGridToEmail</LocCanonicalName>
         </Strings>
       </Button>
@@ -150,7 +150,7 @@
         <Icon guid="guidExportGridToTempTable" id="bmpExportGridToTempTable" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Export Grid as Temp Table</ButtonText>
+          <ButtonText>将结果网格导出为临时表</ButtonText>
           <LocCanonicalName>AxialSqlTools.ExportGridAsTempTable</LocCanonicalName>
         </Strings>
       </Button>
@@ -160,7 +160,7 @@
         <Icon guid="guidExportData" id="bmpExportData" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Export Grid to Google Sheet</ButtonText>
+          <ButtonText>将结果网格导出到 Google 表格</ButtonText>
         </Strings>
       </Button>
       
@@ -169,7 +169,7 @@
         <Icon guid="guidImagesTemplate" id="bmpTemplate" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Script Definition to New Window</ButtonText>
+          <ButtonText>在新窗口生成对象定义脚本</ButtonText>
           <LocCanonicalName>AxialSqlTools.ScriptSelectedObject</LocCanonicalName>
         </Strings>
       </Button>
@@ -179,7 +179,7 @@
         <Icon guid="guidSearch" id="bmpSearch" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Quick Search</ButtonText>
+          <ButtonText>快速搜索</ButtonText>
           <LocCanonicalName>AxialSqlTools.QuickSqlSearch</LocCanonicalName>
           <CanonicalName>AxialSqlTools.QuickSqlSearch</CanonicalName>
         </Strings>
@@ -190,7 +190,7 @@
         <Icon guid="guidSnippet" id="bmpSnippet" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Snippet Manager</ButtonText>
+          <ButtonText>代码片段管理器</ButtonText>
         </Strings>
       </Button>
 
@@ -199,9 +199,9 @@
         <Icon guid="guidSelect" id="bmpSelect" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Select Current Statement</ButtonText>
+          <ButtonText>选择当前语句</ButtonText>
           <LocCanonicalName>AxialSqlTools.SelectCurrentStatement</LocCanonicalName>
-          <ToolTipText>Select the SQL statement at the cursor position (Shift+F5)</ToolTipText>
+          <ToolTipText>选择光标所在的 SQL 语句（Shift+F5）</ToolTipText>
         </Strings>
       </Button>
 
@@ -210,9 +210,9 @@
         <Icon guid="guidToggleBlockComment" id="bmpToggleBlockComment" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Toggle Block Comment</ButtonText>
+          <ButtonText>切换块注释</ButtonText>
           <LocCanonicalName>AxialSqlTools.ToggleBlockComment</LocCanonicalName>
-          <ToolTipText>Wrap the selected SQL text in /* */ or remove the surrounding block comment at the cursor position</ToolTipText>
+          <ToolTipText>使用 /* */ 包裹所选 SQL，或移除光标处的块注释</ToolTipText>
         </Strings>
       </Button>
 
@@ -221,7 +221,7 @@
         <Icon guid="guidQueryHistory" id="bmpQueryHistory" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Query History</ButtonText>
+          <ButtonText>查询历史</ButtonText>
         </Strings>
       </Button>
 
@@ -230,8 +230,8 @@
         <Icon guid="guidStatisticsSummary" id="bmpStatisticsSummary" />
         <CommandFlag>IconAndText</CommandFlag>
         <Strings>
-          <ButtonText>Statistics Summary</ButtonText>
-          <ToolTipText>Open a summary of the most recently captured SET STATISTICS IO/TIME output.</ToolTipText>
+          <ButtonText>统计信息摘要</ButtonText>
+          <ToolTipText>打开最近捕获的 SET STATISTICS IO/TIME 输出摘要。</ToolTipText>
         </Strings>
       </Button>
 
@@ -239,7 +239,7 @@
         <Parent guid="guidAxialSqlToolsPackageCmdSet" id="AxialToolsSubMenuGroup_Health" />
         <Icon guid="guidServerHealth" id="bmpServerHealth" />
         <Strings>
-          <ButtonText>Health Dashboard - Server</ButtonText>
+          <ButtonText>服务器健康面板</ButtonText>
         </Strings>
       </Button>
 
@@ -250,7 +250,7 @@
         <CommandFlag>DynamicVisibility</CommandFlag>
         <CommandFlag>AllowVisibilityChangeOnToolBar</CommandFlag>
         <Strings>
-          <ButtonText>SQL Server Builds</ButtonText>
+          <ButtonText>SQL Server 版本信息</ButtonText>
         </Strings>
       </Button>
 
@@ -259,7 +259,7 @@
         <Icon guid="guidDataTransfer" id="bmpDataTransfer" />
         <!--<CommandFlag>DefaultInvisible</CommandFlag>-->
         <Strings>
-          <ButtonText>Data Transfer</ButtonText>
+          <ButtonText>数据传输</ButtonText>
         </Strings>
       </Button>
 
@@ -268,7 +268,7 @@
         <Icon guid="guidDatabaseScripter" id="bmpDatabaseScripter" />
         <!--<CommandFlag>DefaultInvisible</CommandFlag>-->
         <Strings>
-          <ButtonText>Sync to GitHub</ButtonText>
+          <ButtonText>同步到 GitHub</ButtonText>
         </Strings>
       </Button>
 
@@ -278,7 +278,7 @@
         <Icon guid="guidRefresh" id="bmpRefresh" />
         <!--<CommandFlag>IconAndText</CommandFlag>-->
         <Strings>
-          <ButtonText>Refresh Templates</ButtonText>
+          <ButtonText>刷新模板</ButtonText>
         </Strings>
       </Button>
 
@@ -287,7 +287,7 @@
         <Icon guid="guidOpenFolder" id="bmpOpenFolder" />
         <!--<CommandFlag>IconAndText</CommandFlag>-->
         <Strings>
-          <ButtonText>Open Templates Folder</ButtonText>
+          <ButtonText>打开模板文件夹</ButtonText>
         </Strings>
       </Button>
             
@@ -296,7 +296,7 @@
         <Parent guid="guidAxialSqlToolsPackageCmdSet" id="AxialToolbarGroup" />
         <Icon guid="guidImagesSettings" id="bmpSettings" />        
         <Strings>
-          <ButtonText>Settings</ButtonText>
+          <ButtonText>设置</ButtonText>
         </Strings>
       </Button>
       
@@ -304,7 +304,7 @@
         <Parent guid="guidAxialSqlToolsPackageCmdSet" id="AxialToolbarGroup" />
         <Icon guid="guidInfo" id="bmpInfo" />
         <Strings>
-          <ButtonText>About</ButtonText>
+          <ButtonText>关于</ButtonText>
         </Strings>
       </Button>
 

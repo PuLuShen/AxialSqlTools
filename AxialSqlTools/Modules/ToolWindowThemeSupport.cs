@@ -196,6 +196,7 @@ namespace AxialSqlTools
             control.Resources["AxialThemeDiffDeletedForegroundBrush"] = new SolidColorBrush(diffDeletedForegroundColor);
             control.Resources["AxialThemeDiffModifiedBackgroundBrush"] = new SolidColorBrush(diffModifiedBackgroundColor);
             control.Resources["AxialThemeDiffModifiedForegroundBrush"] = new SolidColorBrush(diffModifiedForegroundColor);
+            LocalizationManager.Apply(control);
         }
     }
 

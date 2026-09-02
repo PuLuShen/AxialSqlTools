@@ -14,6 +14,7 @@ using System.Xml;
 using System.Text.RegularExpressions;
 using EnvDTE;
 using Microsoft.VisualStudio.Shell;
+using System.Reflection;
 
 namespace AxialSqlTools
 {
@@ -108,13 +109,19 @@ namespace AxialSqlTools
             UIConnectionInfo connection = connInfo.UIConnectionInfo;
             if (connection == null) return null;
 
-            string databaseName = inMaster ? "master" : GetAdvancedOption(connection, "DATABASE");
+            string liveServer;
+            string liveDatabase;
+            TryGetActiveEditorServerAndDatabase(out liveServer, out liveDatabase);
+
+            string databaseName = inMaster ? "master" : liveDatabase;
+            if (string.IsNullOrWhiteSpace(databaseName))
+                databaseName = GetAdvancedOption(connection, "DATABASE");
             if (string.IsNullOrWhiteSpace(databaseName))
                 databaseName = "master";
 
             var builder = new SqlConnectionStringBuilder
             {
-                DataSource = connection.ServerName,
+                DataSource = string.IsNullOrWhiteSpace(liveServer) ? connection.ServerName : liveServer,
                 InitialCatalog = databaseName,
                 ApplicationName = "Axial SQL Tools"
             };
@@ -133,11 +140,39 @@ namespace AxialSqlTools
             {
                 FullConnectionString = builder.ToString(),
                 Database = databaseName,
-                ServerName = connection.ServerName,
+                ServerName = builder.DataSource,
                 ActiveConnectionInfo = connection
             };
 
             return ci;
+        }
+
+        private static bool TryGetActiveEditorServerAndDatabase(out string server, out string database)
+        {
+            server = null;
+            database = null;
+            try
+            {
+                object factory = ServiceCache.ScriptFactory;
+                if (factory == null) return false;
+                MethodInfo method = factory.GetType().GetMethod("GetCurrentlyActiveFrameDocView", BindingFlags.NonPublic | BindingFlags.Instance);
+                if (method == null) return false;
+                object docView = method.Invoke(factory, new object[] { ServiceCache.VSMonitorSelection, false, null });
+                object liveConnection = GridAccess.GetNonPublicField(docView, "m_connection");
+                if (liveConnection == null)
+                {
+                    object results = GridAccess.GetNonPublicField(docView, "m_sqlResultsControl");
+                    object execution = GridAccess.GetNonPublicField(results, "m_sqlExec");
+                    liveConnection = GridAccess.GetNonPublicField(execution, "m_conn");
+                }
+                server = GridAccess.GetProperty(liveConnection, "DataSource") as string;
+                database = GridAccess.GetProperty(liveConnection, "Database") as string;
+                return !string.IsNullOrWhiteSpace(database) || !string.IsNullOrWhiteSpace(server);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static string GetAdvancedOption(UIConnectionInfo connection, string key)

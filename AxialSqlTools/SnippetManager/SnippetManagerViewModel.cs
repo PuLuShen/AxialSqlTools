@@ -169,7 +169,7 @@ namespace AxialSqlTools
         {
             if (string.IsNullOrWhiteSpace(EditPrefix))
             {
-                MessageBox.Show("Prefix is required.", "Snippet Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
+                LocalizedMessageBox.Show("Prefix is required.", "Snippet Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -200,7 +200,7 @@ namespace AxialSqlTools
             if (_selectedSnippet == null)
                 return;
 
-            var result = MessageBox.Show(
+            var result = LocalizedMessageBox.Show(
                 $"Delete snippet '{_selectedSnippet.Prefix}'?",
                 "Confirm Delete",
                 MessageBoxButton.YesNo,
@@ -243,7 +243,7 @@ namespace AxialSqlTools
                 {
                     SnippetService.ImportFromLegacyFolder(dialog.SelectedPath);
                     LoadSnippets();
-                    MessageBox.Show("Import completed.", "Snippet Manager", MessageBoxButton.OK, MessageBoxImage.Information);
+                    LocalizedMessageBox.Show("Import completed.", "Snippet Manager", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
             }
         }
@@ -274,7 +274,7 @@ namespace AxialSqlTools
             settings.replaceKey = ReplaceKey;
             settings.cursorMarker = CursorMarker;
             SettingsManager.SaveSnippetSettings(settings);
-            MessageBox.Show("Settings saved.", "Snippet Manager", MessageBoxButton.OK, MessageBoxImage.Information);
+            LocalizedMessageBox.Show("Settings saved.", "Snippet Manager", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         public event PropertyChangedEventHandler PropertyChanged;

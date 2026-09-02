@@ -1,4 +1,4 @@
-﻿using Microsoft.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 using Microsoft.SqlServer.Dac;
 using Microsoft.SqlServer.Management.Common;
 using Microsoft.SqlServer.Management.Sdk.Sfc;
@@ -204,7 +204,7 @@ WHERE NOT EXISTS (SELECT 1 FROM @ExcludeNames AS e WHERE e.database_name = i.dat
                 RepoUrlHyperlink.Inlines.Add("Repo: (none selected)");
                 RepoUrlHyperlink.NavigateUri = null;
 
-                RepoSyncOptionsTextBlock.Text = "Sync options will appear here";
+                RepoSyncOptionsTextBlock.Text = LocalizationManager.T("Sync options will appear here");
                 return;
             }
 
@@ -268,7 +268,7 @@ WHERE NOT EXISTS (SELECT 1 FROM @ExcludeNames AS e WHERE e.database_name = i.dat
             var selectedProfile = (GitHubSyncProfile)ProfilesComboBox.SelectedItem;
             if (selectedProfile == null)
             {
-                MessageBox.Show("Please select a profile to edit.", "No Profile Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
+                LocalizedMessageBox.Show("Please select a profile to edit.", "No Profile Selected", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -317,7 +317,7 @@ WHERE NOT EXISTS (SELECT 1 FROM @ExcludeNames AS e WHERE e.database_name = i.dat
                 string.IsNullOrEmpty(branch) ||
                 string.IsNullOrEmpty(token))
             {
-                MessageBox.Show("Profile Name, Owner, Repo Name, Branch, and Token are required.",
+                LocalizedMessageBox.Show("Profile Name, Owner, Repo Name, Branch, and Token are required.",
                                 "Validation Error", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
@@ -338,7 +338,7 @@ WHERE NOT EXISTS (SELECT 1 FROM @ExcludeNames AS e WHERE e.database_name = i.dat
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to validate GitHub details:\n{ex.Message}",
+                LocalizedMessageBox.Show($"Failed to validate GitHub details:\n{ex.Message}",
                                 "GitHub Validation Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
@@ -379,11 +379,11 @@ WHERE NOT EXISTS (SELECT 1 FROM @ExcludeNames AS e WHERE e.database_name = i.dat
         {
             if (_currentProfile == null)
             {
-                MessageBox.Show("No profile selected.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                LocalizedMessageBox.Show("No profile selected.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 return;
             }
 
-            var confirm = MessageBox.Show($"Delete profile '{_currentProfile.ProfileName}'?", "Confirm Delete",
+            var confirm = LocalizedMessageBox.Show($"Delete profile '{_currentProfile.ProfileName}'?", "Confirm Delete",
                                           MessageBoxButton.YesNo, MessageBoxImage.Warning);
 
             if (confirm == MessageBoxResult.Yes)
@@ -436,7 +436,7 @@ WHERE NOT EXISTS (SELECT 1 FROM @ExcludeNames AS e WHERE e.database_name = i.dat
 
             if (_currentProfile.Repo == null)
             {
-                MessageBox.Show("Please select a GitHub repo first.", "No Repo Selected",
+                LocalizedMessageBox.Show("Please select a GitHub repo first.", "No Repo Selected",
                                 MessageBoxButton.OK, MessageBoxImage.Exclamation);
                 return;
             }
@@ -1112,7 +1112,7 @@ WHERE NOT EXISTS (SELECT 1 FROM @ExcludeNames AS e WHERE e.database_name = i.dat
                           $"Modified files: {toModify.Count}\n" +
                           $"Deleted files:  {toDelete.Count}\n\n" +
                           "Continue?";
-                if (MessageBox.Show(msg, "Confirm Commit", MessageBoxButton.YesNo, MessageBoxImage.Question)
+                if (LocalizedMessageBox.Show(msg, "Confirm Commit", MessageBoxButton.YesNo, MessageBoxImage.Question)
                     != MessageBoxResult.Yes)
                 {
                     progress.Report("Commit cancelled by user.");

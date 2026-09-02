@@ -13,7 +13,7 @@ namespace AxialSqlTools
 
         public StatisticsSummaryWindow() : base(null)
         {
-            Caption = "Statistics Summary";
+            Caption = LocalizationManager.T("Statistics Summary");
             Content = new StatisticsSummaryWindowControl();
         }
 

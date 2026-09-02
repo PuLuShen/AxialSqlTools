@@ -1,4 +1,4 @@
-﻿namespace AxialSqlTools
+namespace AxialSqlTools
 {
     using Microsoft.VisualStudio.Shell;
     using Microsoft.Win32;
@@ -57,7 +57,7 @@
             var connectionInfo = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
             if (connectionInfo == null)
             {
-                MessageBox.Show("Please select a database in Object Explorer first.", "Data Import", MessageBoxButton.OK, MessageBoxImage.Information);
+                LocalizedMessageBox.Show("Please select a database in Object Explorer first.", "Data Import", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -91,7 +91,7 @@
             catch (Exception ex)
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                MessageBox.Show($"Import failed: {ex.Message}", "Data Import", MessageBoxButton.OK, MessageBoxImage.Error);
+                LocalizedMessageBox.Show($"Import failed: {ex.Message}", "Data Import", MessageBoxButton.OK, MessageBoxImage.Error);
                 UpdateStatus("Import failed. Review the error and try again.");
             }
             finally
@@ -105,19 +105,19 @@
         {
             if (string.IsNullOrWhiteSpace(selectedExcelPath))
             {
-                MessageBox.Show("Select an Excel workbook first.", "Data Import", MessageBoxButton.OK, MessageBoxImage.Warning);
+                LocalizedMessageBox.Show("Select an Excel workbook first.", "Data Import", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return false;
             }
 
             if (targetConnection == null)
             {
-                MessageBox.Show("Select a target database from Object Explorer.", "Data Import", MessageBoxButton.OK, MessageBoxImage.Warning);
+                LocalizedMessageBox.Show("Select a target database from Object Explorer.", "Data Import", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return false;
             }
 
             if (string.IsNullOrWhiteSpace(TextBox_TargetTable.Text))
             {
-                MessageBox.Show("Provide a destination table name.", "Data Import", MessageBoxButton.OK, MessageBoxImage.Warning);
+                LocalizedMessageBox.Show("Provide a destination table name.", "Data Import", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return false;
             }
 
@@ -188,7 +188,7 @@
 
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             UpdateStatus($"Imported {worksheetData.Table.Rows.Count:#,0} rows into {destinationTable} on {connectionInfo.DisplayName}.");
-            MessageBox.Show(
+            LocalizedMessageBox.Show(
                 $"Successfully imported {worksheetData.Table.Rows.Count:#,0} rows from {Path.GetFileName(selectedExcelPath)} into {connectionInfo.DisplayName} ({destinationTable}).",
                 "Data Import",
                 MessageBoxButton.OK,

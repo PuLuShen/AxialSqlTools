@@ -67,6 +67,12 @@ To install the add-in, choose one of the following options:
 After installation and an SSMS restart, the **Axial SQL Tools** toolbar will appear in the list of available toolbars in SSMS, providing quick access to all features.<br/>
 <img width="824" height="399" alt="image" src="https://github.com/user-attachments/assets/dc57882f-5a01-46dd-ac99-865ca246a255" />
 
+## Interface Languages
+
+The extension supports Simplified Chinese and English. Simplified Chinese is the default for new installations. Open **Axial SQL Tools > 设置 > 语言** to switch the tool-window interface language. Toolbar command labels use the package's default Simplified Chinese language.
+
+User-facing strings are centralized in `Modules/LocalizationManager.cs`. Keep English source text as the stable localization key and add the corresponding translation there when introducing new UI text.
+
 ## Contributing
 
 Axial SQL Tools is maintained as an open-source project, and community participation is encouraged. Contributions can include bug reports, feature ideas, documentation improvements, query library additions, testing, and code changes.

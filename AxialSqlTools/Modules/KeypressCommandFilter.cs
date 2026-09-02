@@ -4,16 +4,19 @@ using Microsoft.VisualStudio.TextManager.Interop;
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Input;
+using AxialSqlTools.Completion;
 
 namespace AxialSqlTools
 {
-    public class KeypressCommandFilter : IOleCommandTarget
+    public class KeypressCommandFilter : IOleCommandTarget, IDisposable
     {
         private IOleCommandTarget nextCommandTarget;
         private IVsTextView textView;
+        private readonly CompletionController completionController;
         public KeypressCommandFilter(AxialSqlToolsPackage package, IVsTextView textView)
         {
             this.textView = textView;
+            completionController = new CompletionController(textView);
         }
 
         public void AddToChain()
@@ -27,6 +30,41 @@ namespace AxialSqlTools
 
         public int Exec(ref Guid cmdGroup, uint nCmdID, uint nCmdexecopt, IntPtr pvaIn, IntPtr pvaOut)
         {
+            if (cmdGroup == VSConstants.VSStd2K)
+            {
+                if (ShouldProcessAsteriskExpansionKey(nCmdID) && AsteriskExpansionService.TryExpand(textView))
+                {
+                    completionController.Dismiss();
+                    return VSConstants.S_OK;
+                }
+
+                if (completionController.HandleNavigation(nCmdID))
+                    return VSConstants.S_OK;
+
+                if ((nCmdID == (uint)VSConstants.VSStd2KCmdID.RETURN || nCmdID == (uint)VSConstants.VSStd2KCmdID.TAB)
+                    && completionController.TryCommit())
+                    return VSConstants.S_OK;
+
+                if (nCmdID == (uint)VSConstants.VSStd2KCmdID.TAB
+                    && completionController.TryAdvanceSnippet((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift))
+                    return VSConstants.S_OK;
+
+                if (nCmdID == (uint)VSConstants.VSStd2KCmdID.COMPLETEWORD || nCmdID == (uint)VSConstants.VSStd2KCmdID.SHOWMEMBERLIST)
+                {
+                    completionController.Request(true);
+                    return VSConstants.S_OK;
+                }
+
+                if (nCmdID == (uint)VSConstants.VSStd2KCmdID.TYPECHAR || nCmdID == (uint)VSConstants.VSStd2KCmdID.BACKSPACE)
+                {
+                    if (nCmdID == (uint)VSConstants.VSStd2KCmdID.TYPECHAR && TryGetTypedCharacter(pvaIn, out char typedCharacter))
+                        completionController.TryCommitOnCharacter(typedCharacter);
+                    int result = nextCommandTarget?.Exec(ref cmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut) ?? VSConstants.S_OK;
+                    completionController.Request(false);
+                    return result;
+                }
+            }
+
             if (cmdGroup == VSConstants.VSStd2K && IsSupportedKey(nCmdID))
             {
                 if (ShouldProcessSnippetKey(nCmdID) && TryReplaceSnippet())
@@ -35,11 +73,6 @@ namespace AxialSqlTools
                     return VSConstants.S_OK;
                 }
 
-                if (ShouldProcessAsteriskExpansionKey(nCmdID) && AsteriskExpansionService.TryExpand(textView))
-                {
-                    // Asterisk was expanded — swallow the key so no newline/tab is inserted.
-                    return VSConstants.S_OK;
-                }
             }
 
             // Pass along the command so that other command handlers can process it.
@@ -68,9 +101,6 @@ namespace AxialSqlTools
 
         private bool ShouldProcessAsteriskExpansionKey(uint nCmdID)
         {
-            if (!SettingsManager.GetUseSnippets())
-                return false;
-
             var settings = SettingsManager.GetAsteriskExpansionSettings();
             return settings.useAsteriskExpansion && KeyMatches(settings.triggerKey, nCmdID);
         }
@@ -206,5 +236,29 @@ namespace AxialSqlTools
 
             return nextCommandTarget?.QueryStatus(ref cmdGroup, cCmds, prgCmds, pCmdText) ?? VSConstants.S_OK;
         }
+
+        private static bool TryGetTypedCharacter(IntPtr variant, out char value)
+        {
+            value = '\0';
+            if (variant == IntPtr.Zero) return false;
+            try
+            {
+                object raw = Marshal.GetObjectForNativeVariant(variant);
+                if (raw is char character) { value = character; return true; }
+                string text = Convert.ToString(raw);
+                if (!string.IsNullOrEmpty(text)) { value = text[0]; return true; }
+            }
+            catch { }
+            return false;
+        }
+
+        public void Dispose()
+        {
+            completionController.Dispose();
+            try { textView?.RemoveCommandFilter(this); } catch { }
+            textView = null;
+        }
+
+        public bool IsFor(IVsTextView view) => ReferenceEquals(textView, view);
     }
 }

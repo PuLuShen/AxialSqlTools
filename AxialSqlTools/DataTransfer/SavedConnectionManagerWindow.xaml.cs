@@ -58,7 +58,7 @@ namespace AxialSqlTools
             }
             else
             {
-                MessageBox.Show("Select a connection to save.", "Saved Connections");
+                LocalizedMessageBox.Show("Select a connection to save.", "Saved Connections");
             }
         }
 

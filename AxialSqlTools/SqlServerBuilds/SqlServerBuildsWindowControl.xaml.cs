@@ -1,4 +1,4 @@
-﻿using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using System;
 using System.Collections.Generic;
@@ -250,7 +250,7 @@ namespace AxialSqlTools
 
             // Copy the generated script to the clipboard
             Clipboard.SetDataObject(sb.ToString());
-            MessageBox.Show("TSQL script copied to clipboard!", "Copy as TSQL", MessageBoxButton.OK, MessageBoxImage.Information);
+            LocalizedMessageBox.Show("TSQL script copied to clipboard!", "Copy as TSQL", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 }

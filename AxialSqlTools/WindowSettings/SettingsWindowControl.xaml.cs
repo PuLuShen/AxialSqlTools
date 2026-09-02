@@ -1,4 +1,4 @@
-﻿namespace AxialSqlTools
+namespace AxialSqlTools
 {
     using Microsoft.Data.SqlClient;
     using Newtonsoft.Json.Linq;
@@ -31,6 +31,7 @@
         private readonly ToolWindowThemeController _themeController;
         private bool updateResultSubscribed;
         private ObservableCollection<SettingsManager.ConnectionColorRule> _connectionColorRules;
+        private SettingsManager.ConnectionColorRule _editingConnectionColorRule;
 
         private string tsqlFormatExample = @"while (1=0) 
 begin 
@@ -58,6 +59,8 @@ as select 1;
 
             _connectionColorRules = new ObservableCollection<SettingsManager.ConnectionColorRule>();
             ConnectionColorRulesListView.ItemsSource = _connectionColorRules;
+            UpdateConnectionColorRuleButtons();
+            SetConnectionColorRulesDirty(false);
 
             _themeController = new ToolWindowThemeController(this, ApplyThemeBrushResources);
 
@@ -110,6 +113,13 @@ as select 1;
             ApplyGoogleSheetsAuthorizationBrush();
         }
 
+        private void Button_ApplyLanguage_Click(object sender, RoutedEventArgs e)
+        {
+            string language = UiLanguageSelector.SelectedValue as string;
+            LocalizationManager.SetLanguage(language);
+            LocalizationManager.Apply(this);
+        }
+
         private Brush GetThemedStatusBrush(bool isSuccess)
         {
             string key = isSuccess ? "AxialThemeStatusSuccessBrush" : "AxialThemeStatusErrorBrush";
@@ -124,7 +134,7 @@ as select 1;
                 return;
             }
 
-            bool isAuthorized = string.Equals(GoogleSheetsRefreshTokenLabel.Text, "Authorized", StringComparison.OrdinalIgnoreCase);
+            bool isAuthorized = string.Equals(GoogleSheetsRefreshTokenLabel.Text, LocalizationManager.T("Authorized"), StringComparison.OrdinalIgnoreCase);
             GoogleSheetsRefreshTokenLabel.Foreground = GetThemedStatusBrush(isAuthorized);
         }
 
@@ -132,6 +142,9 @@ as select 1;
         {
             try
             {
+
+                UiLanguageSelector.SelectedValue = SettingsManager.GetUiLanguage();
+                ScriptObjectShortcut.Text = SettingsManager.GetScriptObjectShortcut();
 
                 ScriptFolder.Text = SettingsManager.GetTemplatesFolder();
 
@@ -142,11 +155,19 @@ as select 1;
                 var asteriskSettings = SettingsManager.GetAsteriskExpansionSettings();
                 UseAsteriskExpansion.IsChecked = asteriskSettings.useAsteriskExpansion;
                 AsteriskExpansionTriggerMode.SelectedValue = asteriskSettings.triggerKey.ToString();
+                var completionSettings = SettingsManager.GetSqlCompletionSettings();
+                UseSqlCompletion.IsChecked = completionSettings.enabled;
+                AutomaticSqlCompletion.IsChecked = completionSettings.automaticPopup;
+                CompletionSquareBrackets.IsChecked = completionSettings.useSquareBrackets;
+                CompletionUsageLearning.IsChecked = completionSettings.learnFromUsage;
+                CompletionDelay.Text = completionSettings.delayMilliseconds.ToString();
+                CompletionMaximumItems.Text = completionSettings.maximumItems.ToString();
 
                 _queryHistoryConnectionString = SettingsManager.GetQueryHistoryConnectionString();
                 QueryHistoryTableName.Text = SettingsManager.GetQueryHistoryTableName();
                 QueryHistoryTextFilesInfo.Text = SettingsManager.GetQueryHistoryTextFileFolder();
                 SelectQueryHistoryStorageType(SettingsManager.GetQueryHistoryStorageMode());
+                SelectQueryHistoryShortcut(SettingsManager.GetQueryHistoryShortcut());
                 UpdateQueryHistoryStorageControls();
                 UpdateQueryHistoryConnectionDetails();
 
@@ -205,7 +226,7 @@ as select 1;
                 _logger.Error(ex, "An exception occurred while loading settings");
 
                 string msg = $"Error message: {ex.Message} \nInnerException: {ex.InnerException}";
-                MessageBox.Show(msg, "Error");
+                LocalizedMessageBox.Show(msg, "Error");
             }
 
             try
@@ -269,6 +290,15 @@ as select 1;
                 triggerKey = GetSelectedAsteriskExpansionTriggerKey()
             });
 
+            var completionSettings = SettingsManager.GetSqlCompletionSettings();
+            completionSettings.enabled = UseSqlCompletion.IsChecked.GetValueOrDefault();
+            completionSettings.automaticPopup = AutomaticSqlCompletion.IsChecked.GetValueOrDefault();
+            completionSettings.useSquareBrackets = CompletionSquareBrackets.IsChecked.GetValueOrDefault();
+            completionSettings.learnFromUsage = CompletionUsageLearning.IsChecked.GetValueOrDefault();
+            if (int.TryParse(CompletionDelay.Text, out int delay)) completionSettings.delayMilliseconds = delay;
+            if (int.TryParse(CompletionMaximumItems.Text, out int maximumItems)) completionSettings.maximumItems = maximumItems;
+            SettingsManager.SaveSqlCompletionSettings(completionSettings);
+
             SavedMessage();
         }
 
@@ -286,12 +316,12 @@ as select 1;
                 // Extract the specific folder from the zip
                 ExtractSpecificFolderFromZip(tempZipPath, targetFolderPath, targetPath);
 
-                MessageBox.Show("Axial SQL Tool Query Library has been downloaded", "Done");
+                LocalizedMessageBox.Show("Axial SQL Tool Query Library has been downloaded", "Done");
 
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
+                LocalizedMessageBox.Show(
                     string.Format(System.Globalization.CultureInfo.CurrentUICulture, "An error occurred: '{0}'", ex.Message),
                     "Error");
             }
@@ -371,7 +401,7 @@ as select 1;
 
         private void SavedMessage()
         {
-            MessageBox.Show(
+            LocalizedMessageBox.Show(
                 string.Format(System.Globalization.CultureInfo.CurrentUICulture, "The change has been saved", this.ToString()),
                 "Setting saved");
         }
@@ -487,7 +517,7 @@ as select 1;
 
             if (!settings.HasClientConfiguration())
             {
-                MessageBox.Show("Client ID and Client Secret are required before authorizing Google Sheets.", "Google Sheets", MessageBoxButton.OK, MessageBoxImage.Warning);
+                LocalizedMessageBox.Show("Client ID and Client Secret are required before authorizing Google Sheets.", "Google Sheets", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -515,7 +545,7 @@ as select 1;
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Authorization failed: {ex.Message}", "Google Sheets", MessageBoxButton.OK, MessageBoxImage.Error);
+                LocalizedMessageBox.Show($"Authorization failed: {ex.Message}", "Google Sheets", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -536,12 +566,12 @@ as select 1;
         {
             if (string.IsNullOrWhiteSpace(refreshToken))
             {
-                GoogleSheetsRefreshTokenLabel.Text = "Not authorized";
+                GoogleSheetsRefreshTokenLabel.Text = LocalizationManager.T("Not authorized");
                 GoogleSheetsRefreshTokenLabel.Foreground = new SolidColorBrush(Colors.DarkRed);
             }
             else
             {
-                GoogleSheetsRefreshTokenLabel.Text = "Authorized";
+                GoogleSheetsRefreshTokenLabel.Text = LocalizationManager.T("Authorized");
                 GoogleSheetsRefreshTokenLabel.Foreground = new SolidColorBrush(Colors.DarkGreen);
             }
         }
@@ -564,6 +594,13 @@ as select 1;
             SettingsManager.SaveQueryHistoryConnectionString(_queryHistoryConnectionString);
             SettingsManager.SaveQueryHistoryTableName(QueryHistoryTableName.Text);
             SettingsManager.SaveQueryHistoryStorageMode(GetSelectedQueryHistoryStorageType());
+            string shortcut = QueryHistoryShortcut.SelectedValue?.ToString() ?? string.Empty;
+            SettingsManager.SaveQueryHistoryShortcut(shortcut);
+            if (!ShortcutManager.ApplyQueryHistoryShortcut(shortcut, out string shortcutError))
+            {
+                LocalizedMessageBox.Show("Settings were saved, but the shortcut could not be applied: " + shortcutError, "Query History");
+                return;
+            }
 
             SavedMessage();
 
@@ -580,6 +617,143 @@ as select 1;
 
             UpdateQueryHistoryConnectionDetails();
 
+        }
+
+        private void SelectQueryHistoryShortcut(string shortcut)
+        {
+            foreach (var item in QueryHistoryShortcut.Items)
+            {
+                if (item is ComboBoxItem option && string.Equals(option.Tag?.ToString() ?? string.Empty, shortcut ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                {
+                    QueryHistoryShortcut.SelectedItem = option;
+                    return;
+                }
+            }
+            QueryHistoryShortcut.SelectedIndex = 0;
+        }
+
+        private void Button_ApplyScriptObjectShortcut_Click(object sender, RoutedEventArgs e)
+        {
+            string shortcut = NormalizeShortcut(ScriptObjectShortcut.Text);
+            if (shortcut == null)
+            {
+                LocalizedMessageBox.Show("Enter a shortcut such as F12, Ctrl+F12, or Ctrl+Shift+O. Enter None to remove it.",
+                    "Keyboard shortcuts", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (!ShortcutManager.ApplyScriptObjectShortcut(shortcut, out string error))
+            {
+                LocalizedMessageBox.Show("The shortcut could not be applied: " + error,
+                    "Keyboard shortcuts", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            if (!SettingsManager.SaveScriptObjectShortcut(shortcut))
+            {
+                LocalizedMessageBox.Show("The shortcut was applied, but the setting could not be saved.",
+                    "Keyboard shortcuts", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            ScriptObjectShortcut.Text = string.IsNullOrEmpty(shortcut) ? "None" : shortcut;
+            SavedMessage();
+        }
+
+        private static string NormalizeShortcut(string value)
+        {
+            value = (value ?? string.Empty).Trim();
+            if (string.Equals(value, "None", StringComparison.OrdinalIgnoreCase))
+                return string.Empty;
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            string[] parts = value.Replace(" ", string.Empty).Split('+');
+            if (parts.Length == 0 || parts.Length > 4)
+                return null;
+
+            var modifiers = new System.Collections.Generic.List<string>();
+            string key = null;
+            foreach (string rawPart in parts)
+            {
+                string part = rawPart.Trim();
+                if (string.Equals(part, "Ctrl", StringComparison.OrdinalIgnoreCase) || string.Equals(part, "Control", StringComparison.OrdinalIgnoreCase))
+                    AddShortcutModifier(modifiers, "Ctrl");
+                else if (string.Equals(part, "Shift", StringComparison.OrdinalIgnoreCase))
+                    AddShortcutModifier(modifiers, "Shift");
+                else if (string.Equals(part, "Alt", StringComparison.OrdinalIgnoreCase))
+                    AddShortcutModifier(modifiers, "Alt");
+                else if (key == null && IsValidShortcutKey(part))
+                    key = part.ToUpperInvariant();
+                else
+                    return null;
+            }
+
+            if (key == null)
+                return null;
+            modifiers.Add(key);
+            return string.Join("+", modifiers);
+        }
+
+        private static void AddShortcutModifier(System.Collections.Generic.List<string> modifiers, string modifier)
+        {
+            if (!modifiers.Contains(modifier))
+                modifiers.Add(modifier);
+        }
+
+        private static bool IsValidShortcutKey(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key)) return false;
+            if (key.Length == 1 && char.IsLetterOrDigit(key[0])) return true;
+            if (key.Length > 1 && char.ToUpperInvariant(key[0]) == 'F' && int.TryParse(key.Substring(1), out int functionKey))
+                return functionKey >= 1 && functionKey <= 24;
+            return string.Equals(key, "Insert", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(key, "Delete", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(key, "Home", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(key, "End", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async void Button_TestQueryHistory_Click(object sender, RoutedEventArgs e)
+        {
+            button_TestQueryHistory.IsEnabled = false;
+            try
+            {
+                string mode = GetSelectedQueryHistoryStorageType();
+                if (string.Equals(mode, QueryHistoryStorageModeDisabled, StringComparison.OrdinalIgnoreCase))
+                {
+                    LocalizedMessageBox.Show("Query history recording is disabled.", "Query History");
+                    return;
+                }
+                if (string.Equals(mode, QueryHistoryStorageModeTextFiles, StringComparison.OrdinalIgnoreCase))
+                {
+                    string folder = SettingsManager.GetQueryHistoryTextFileFolder();
+                    await System.Threading.Tasks.Task.Run(() => Directory.CreateDirectory(folder));
+                    LocalizedMessageBox.Show("Configuration is ready. Query history will be stored in:\n" + folder, "Query History");
+                    return;
+                }
+                if (string.IsNullOrWhiteSpace(_queryHistoryConnectionString))
+                    throw new InvalidOperationException("Select a database connection first.");
+
+                string tableName = EffectiveQueryHistoryTableName();
+                bool tableExists;
+                using (var connection = new SqlConnection(_queryHistoryConnectionString))
+                {
+                    await connection.OpenAsync();
+                    using (var command = new SqlCommand("SELECT CASE WHEN OBJECT_ID(@TableName, 'U') IS NULL THEN 0 ELSE 1 END", connection))
+                    {
+                        command.CommandTimeout = 15;
+                        command.Parameters.AddWithValue("@TableName", tableName);
+                        tableExists = Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
+                    }
+                }
+                LocalizedMessageBox.Show(tableExists
+                    ? "Connection succeeded and the query history table is ready."
+                    : "Connection succeeded. The table does not exist yet; it will be created when the next query is recorded.", "Query History");
+            }
+            catch (Exception ex)
+            {
+                LocalizedMessageBox.Show("Configuration test failed: " + ex.Message, "Query History");
+            }
+            finally { button_TestQueryHistory.IsEnabled = true; }
         }
 
         private void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -772,6 +946,9 @@ END
         {
             _connectionColorRules = new ObservableCollection<SettingsManager.ConnectionColorRule>(SettingsManager.GetConnectionColorRules());
             ConnectionColorRulesListView.ItemsSource = _connectionColorRules;
+            CancelConnectionColorRuleEdit();
+            SetConnectionColorRulesDirty(false);
+            UpdateConnectionColorRuleButtons();
         }
 
         private void EnsureConnectionColorRulesLoaded()
@@ -834,6 +1011,7 @@ END
                 {
                     rule.StatusBarColor = picked;
                     ConnectionColorRulesListView.Items.Refresh();
+                    SetConnectionColorRulesDirty(true);
                 }
             }
         }
@@ -847,7 +1025,7 @@ END
 
             if (string.IsNullOrEmpty(serverPattern) && string.IsNullOrEmpty(databasePattern))
             {
-                MessageBox.Show("Fill in at least the server name or the database name.", "Connection Colors");
+                LocalizedMessageBox.Show("Fill in at least the server name or the database name.", "Connection Colors");
                 return;
             }
 
@@ -858,16 +1036,30 @@ END
                 hex = string.Format("#{0:X2}{1:X2}{2:X2}", brush.Color.R, brush.Color.G, brush.Color.B);
             }
 
-            _connectionColorRules.Add(new SettingsManager.ConnectionColorRule
+            if (_editingConnectionColorRule != null)
             {
-                ServerNamePattern = serverPattern ?? string.Empty,
-                DatabaseNamePattern = databasePattern ?? string.Empty,
-                StatusBarColor = hex,
-                IsEnabled = true
-            });
+                _editingConnectionColorRule.ServerNamePattern = serverPattern ?? string.Empty;
+                _editingConnectionColorRule.DatabaseNamePattern = databasePattern ?? string.Empty;
+                _editingConnectionColorRule.StatusBarColor = hex;
+                ConnectionColorRulesListView.Items.Refresh();
+                ConnectionColorRulesListView.SelectedItem = _editingConnectionColorRule;
+            }
+            else
+            {
+                var newRule = new SettingsManager.ConnectionColorRule
+                {
+                    ServerNamePattern = serverPattern ?? string.Empty,
+                    DatabaseNamePattern = databasePattern ?? string.Empty,
+                    StatusBarColor = hex,
+                    IsEnabled = true
+                };
+                _connectionColorRules.Add(newRule);
+                ConnectionColorRulesListView.SelectedItem = newRule;
+            }
 
-            NewRuleServerPattern.Text = "";
-            NewRuleDatabasePattern.Text = "";
+            SetConnectionColorRulesDirty(true);
+            CancelConnectionColorRuleEdit();
+            UpdateConnectionColorRuleButtons();
         }
 
         private void ButtonEditColorRule_Click(object sender, RoutedEventArgs e)
@@ -885,7 +1077,11 @@ END
                 }
                 catch { }
 
-                _connectionColorRules.Remove(selectedRule);
+                _editingConnectionColorRule = selectedRule;
+                ConnectionColorRuleEditor.Header = LocalizationManager.T("Edit rule");
+                button_CommitColorRule.Content = LocalizationManager.T("Save changes");
+                button_CancelColorRuleEdit.Visibility = Visibility.Visible;
+                NewRuleServerPattern.Focus();
             }
         }
 
@@ -894,15 +1090,93 @@ END
             if (ConnectionColorRulesListView.SelectedItem is SettingsManager.ConnectionColorRule selectedRule)
             {
                 _connectionColorRules.Remove(selectedRule);
+                SetConnectionColorRulesDirty(true);
+                CancelConnectionColorRuleEdit();
+                UpdateConnectionColorRuleButtons();
             }
+        }
+
+        private void ButtonCancelColorRuleEdit_Click(object sender, RoutedEventArgs e) => CancelConnectionColorRuleEdit();
+
+        private void CancelConnectionColorRuleEdit()
+        {
+            _editingConnectionColorRule = null;
+            if (ConnectionColorRuleEditor == null)
+                return;
+
+            ConnectionColorRuleEditor.Header = LocalizationManager.T("Add new rule");
+            button_CommitColorRule.Content = LocalizationManager.T("+ Add");
+            button_CancelColorRuleEdit.Visibility = Visibility.Collapsed;
+            NewRuleServerPattern.Text = string.Empty;
+            NewRuleDatabasePattern.Text = string.Empty;
+        }
+
+        private void ButtonMoveColorRuleUp_Click(object sender, RoutedEventArgs e) => MoveSelectedConnectionColorRule(-1);
+
+        private void ButtonMoveColorRuleDown_Click(object sender, RoutedEventArgs e) => MoveSelectedConnectionColorRule(1);
+
+        private void MoveSelectedConnectionColorRule(int offset)
+        {
+            int oldIndex = ConnectionColorRulesListView.SelectedIndex;
+            int newIndex = oldIndex + offset;
+            if (oldIndex < 0 || newIndex < 0 || newIndex >= _connectionColorRules.Count)
+                return;
+
+            var selectedRule = _connectionColorRules[oldIndex];
+            _connectionColorRules.Move(oldIndex, newIndex);
+            ConnectionColorRulesListView.SelectedItem = selectedRule;
+            SetConnectionColorRulesDirty(true);
+            UpdateConnectionColorRuleButtons();
+        }
+
+        private void ConnectionColorRulesListView_SelectionChanged(object sender, SelectionChangedEventArgs e) => UpdateConnectionColorRuleButtons();
+
+        private void ConnectionColorRulesListView_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (ConnectionColorRulesListView.SelectedItem != null)
+                ButtonEditColorRule_Click(sender, e);
+        }
+
+        private void ConnectionColorRuleEnabled_Click(object sender, RoutedEventArgs e)
+        {
+            SetConnectionColorRulesDirty(true);
+        }
+
+        private void UpdateConnectionColorRuleButtons()
+        {
+            if (button_EditColorRule == null)
+                return;
+
+            int index = ConnectionColorRulesListView.SelectedIndex;
+            bool hasSelection = index >= 0;
+            button_EditColorRule.IsEnabled = hasSelection;
+            button_RemoveColorRule.IsEnabled = hasSelection;
+            button_MoveColorRuleUp.IsEnabled = hasSelection && index > 0;
+            button_MoveColorRuleDown.IsEnabled = hasSelection && index < _connectionColorRules.Count - 1;
+        }
+
+        private void SetConnectionColorRulesDirty(bool dirty)
+        {
+            if (button_SaveConnectionColorRules == null)
+                return;
+
+            button_SaveConnectionColorRules.IsEnabled = dirty;
+            ConnectionColorSaveStatus.Text = LocalizationManager.T(dirty ? "Unsaved changes" : "No unsaved changes");
         }
 
         private void Button_SaveConnectionColorRules_Click(object sender, RoutedEventArgs e)
         {
             var rules = new System.Collections.Generic.List<SettingsManager.ConnectionColorRule>(_connectionColorRules);
-            SettingsManager.SaveConnectionColorRules(rules);
+            if (!SettingsManager.SaveConnectionColorRules(rules))
+            {
+                LocalizedMessageBox.Show("The connection color rules could not be saved. Please try again.", "Connection Colors",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
             GridAccess.ColorAllDocumentTabs();
             GridAccess.ScheduleReapplyAllTabColors();
+            SetConnectionColorRulesDirty(false);
             SavedMessage();
         }
 

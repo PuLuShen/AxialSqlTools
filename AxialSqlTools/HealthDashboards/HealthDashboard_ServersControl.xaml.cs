@@ -1,4 +1,4 @@
-﻿namespace AxialSqlTools
+namespace AxialSqlTools
 {
     using System.Collections.Generic;
     using System.Collections.ObjectModel;
@@ -57,7 +57,7 @@
         [SuppressMessage("StyleCop.CSharp.NamingRules", "SA1300:ElementMustBeginWithUpperCaseLetter", Justification = "Default event handler naming pattern")]
         private void button1_Click(object sender, RoutedEventArgs e)
         {
-            MessageBox.Show(
+            LocalizedMessageBox.Show(
                 string.Format(System.Globalization.CultureInfo.CurrentUICulture, "Invoked '{0}'", this.ToString()),
                 "HealthDashboard_Servers");
         }

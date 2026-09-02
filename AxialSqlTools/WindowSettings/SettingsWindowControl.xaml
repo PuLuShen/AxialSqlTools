@@ -105,6 +105,40 @@
                     BorderBrush="{DynamicResource AxialThemeBorderBrush}"
 					BorderThickness="1">
 
+            <TabItem Header="Language">
+                <StackPanel Margin="16" MaxWidth="520" HorizontalAlignment="Left">
+                    <TextBlock Text="Interface language:" Margin="0,0,0,8" />
+                    <ComboBox x:Name="UiLanguageSelector" Width="220" HorizontalAlignment="Left" SelectedValuePath="Tag">
+                        <ComboBoxItem Content="Simplified Chinese" Tag="zh-CN" />
+                        <ComboBoxItem Content="English" Tag="en-US" />
+                    </ComboBox>
+                    <Button Content="Apply" Width="90" HorizontalAlignment="Left" Margin="0,12,0,0"
+                            Click="Button_ApplyLanguage_Click" />
+                    <TextBlock Text="The language setting applies immediately to Axial SQL Tools windows. Toolbar command labels use the package default language."
+                               TextWrapping="Wrap" Margin="0,10,0,0" />
+                </StackPanel>
+            </TabItem>
+
+            <TabItem Header="Keyboard shortcuts">
+                <StackPanel Margin="16" MaxWidth="620" HorizontalAlignment="Left">
+                    <TextBlock Text="Script Object Definition" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="170"/>
+                            <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Open definition script:" VerticalAlignment="Center"/>
+                        <TextBox Grid.Column="1" x:Name="ScriptObjectShortcut" Margin="0,0,8,0"
+                                 VerticalContentAlignment="Center" ToolTip="Examples: F12, Ctrl+F12, Ctrl+Shift+O, or None"/>
+                        <Button Grid.Column="2" Content="Apply" Width="90" Click="Button_ApplyScriptObjectShortcut_Click"
+                                Style="{DynamicResource AxialPrimaryButtonStyle}"/>
+                    </Grid>
+                    <TextBlock Text="Select an object name in the SQL editor, then use this shortcut to open its definition script. Enter None to remove the shortcut."
+                               TextWrapping="Wrap" Opacity="0.8" Margin="0,10,0,0"/>
+                </StackPanel>
+            </TabItem>
+
             <TabItem Header="Query Templates">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -192,6 +226,10 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
@@ -245,18 +283,15 @@
                     <CheckBox Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2"
                               x:Name="UseAsteriskExpansion"
                               Content="Replace SELECT * with column list"
-                              IsEnabled="{Binding IsChecked, ElementName=UseSnippets}"
                               Margin="5"/>
 
                     <Label Grid.Row="6" Grid.Column="0"
                            Content="Replace asterisk when pressing:"
-                           IsEnabled="{Binding IsChecked, ElementName=UseSnippets}"
                            VerticalAlignment="Center"
                            Margin="5"/>
 
                     <ComboBox Grid.Row="6" Grid.Column="1"
                               x:Name="AsteriskExpansionTriggerMode"
-                              IsEnabled="{Binding IsChecked, ElementName=UseSnippets}"
                               SelectedValuePath="Tag"
                               Margin="5"
                               VerticalContentAlignment="Center">
@@ -266,7 +301,22 @@
                         <ComboBoxItem Content="Ctrl+Space" Tag="CtrlSpace" />
                     </ComboBox>
 
-                    <Button Grid.Row="7" Grid.Column="0"
+                    <CheckBox Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" x:Name="UseSqlCompletion"
+                              Content="Enable smart SQL completion" Margin="5"/>
+                    <CheckBox Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2" x:Name="AutomaticSqlCompletion"
+                              Content="Show completion automatically while typing" Margin="5"/>
+                    <StackPanel Grid.Row="9" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal">
+                        <CheckBox x:Name="CompletionSquareBrackets" Content="Insert square brackets" Margin="5"/>
+                        <CheckBox x:Name="CompletionUsageLearning" Content="Learn completion ranking locally" Margin="18,5,5,5"/>
+                    </StackPanel>
+                    <StackPanel Grid.Row="10" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal">
+                        <Label Content="Popup delay (ms):" Margin="5"/>
+                        <TextBox x:Name="CompletionDelay" Width="60" Margin="5"/>
+                        <Label Content="Maximum matches:" Margin="18,5,5,5"/>
+                        <TextBox x:Name="CompletionMaximumItems" Width="60" Margin="5"/>
+                    </StackPanel>
+
+                    <Button Grid.Row="11" Grid.Column="0"
                                                         x:Name="button_SaveSnippetFolder"
                                                         Click="Button_SaveSnippetFolder_Click"
                                                         Width="80"
@@ -315,6 +365,18 @@
                 <Run Text="Wiki"/>
             </Hyperlink>
                     </TextBlock>
+                    <Label Grid.Row="8" Grid.Column="0" Content="Open shortcut:" Margin="5"/>
+                    <StackPanel Grid.Row="8" Grid.Column="1" Orientation="Horizontal" Margin="5">
+                        <ComboBox x:Name="QueryHistoryShortcut" Width="180" SelectedValuePath="Tag">
+                            <ComboBoxItem Content="Ctrl + Alt + H" Tag="Ctrl+Alt+H"/>
+                            <ComboBoxItem Content="Ctrl + Shift + H" Tag="Ctrl+Shift+H"/>
+                            <ComboBoxItem Content="Ctrl + Alt + Q" Tag="Ctrl+Alt+Q"/>
+                            <ComboBoxItem Content="Alt + H" Tag="Alt+H"/>
+                            <ComboBoxItem Content="None" Tag=""/>
+                        </ComboBox>
+                        <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Opacity="0.75"
+                                   Text="Open Query History from anywhere in SSMS"/>
+                    </StackPanel>
                     <Label Grid.Row="1" Grid.Column="0"
                Content="Storage Type:"
                Margin="5"/>
@@ -356,14 +418,16 @@
                    VerticalAlignment="Center"
                    Margin="5"/>
 
-                    <Button Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2"
-                Content="Use connection from Object Explorer"
-                x:Name="button_SelectDatabaseFromObjectExplorer"
-                Click="Button_SelectDatabaseFromObjectExplorer_Click"
-                HorizontalAlignment="Left"
-                Width="240"
-                Margin="5,0,0,5"
-                FontWeight="Bold"/>
+                    <StackPanel Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal">
+                        <Button Content="Use connection from Object Explorer"
+                                x:Name="button_SelectDatabaseFromObjectExplorer"
+                                Click="Button_SelectDatabaseFromObjectExplorer_Click"
+                                Width="240" Margin="5,0,5,5" FontWeight="Bold"/>
+                        <Button Content="Test configuration"
+                                x:Name="button_TestQueryHistory"
+                                Click="Button_TestQueryHistory_Click"
+                                Width="130" Margin="0,0,0,5"/>
+                    </StackPanel>
 
                     <Label Grid.Row="5" Grid.Column="0"
                x:Name="Label_QueryHistoryTargetTableName"
@@ -722,7 +786,7 @@
                     </StackPanel>
 
                     <!-- Add new rule area -->
-                    <GroupBox Grid.Row="1" Header="Add new rule" Margin="0,0,0,10" Padding="8">
+                    <GroupBox Grid.Row="1" x:Name="ConnectionColorRuleEditor" Header="Add new rule" Margin="0,0,0,10" Padding="8">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
@@ -755,7 +819,10 @@
                                         Cursor="Hand" MouseLeftButtonUp="NewRuleColorPreview_Click"
                                         ToolTip="Click to pick a color"/>
                                 <Button Content="Pick color..." Click="NewRuleColorPreview_Click" Margin="0,0,15,0"/>
-                                <Button Content="+ Add" Click="ButtonAddColorRule_Click" FontWeight="Bold" Width="60"/>
+                                <Button x:Name="button_CommitColorRule" Content="+ Add" Click="ButtonAddColorRule_Click"
+                                        Style="{DynamicResource AxialPrimaryButtonStyle}" FontWeight="Bold" MinWidth="80"/>
+                                <Button x:Name="button_CancelColorRuleEdit" Content="Cancel edit"
+                                        Click="ButtonCancelColorRuleEdit_Click" Margin="5,0,0,0" Visibility="Collapsed"/>
                             </StackPanel>
                         </Grid>
                     </GroupBox>
@@ -764,23 +831,29 @@
                     <GroupBox Grid.Row="2" Header="Configured rules" Padding="5">
                         <DockPanel>
                             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,5,0,0">
-                                <Button Content="Edit selected" Click="ButtonEditColorRule_Click"
+                                <Button x:Name="button_EditColorRule" Content="Edit selected" Click="ButtonEditColorRule_Click"
                                         Width="100" Margin="0,0,5,0" FontWeight="Bold"/>
-                                <Button Content="Remove selected" Click="ButtonRemoveColorRule_Click"
+                                <Button x:Name="button_RemoveColorRule" Content="Remove selected" Click="ButtonRemoveColorRule_Click"
                                         Width="120" Margin="0,0,5,0"/>
+                                <Button x:Name="button_MoveColorRuleUp" Content="Move up" Click="ButtonMoveColorRuleUp_Click"
+                                        Width="80" Margin="0,0,5,0"/>
+                                <Button x:Name="button_MoveColorRuleDown" Content="Move down" Click="ButtonMoveColorRuleDown_Click"
+                                        Width="90"/>
                             </StackPanel>
                             <ListView x:Name="ConnectionColorRulesListView"
                                       Background="{DynamicResource AxialThemeBackgroundBrush}"
                                       BorderBrush="{DynamicResource AxialThemeBorderBrush}"
                                       Foreground="{DynamicResource AxialThemeForegroundBrush}"
                                       ItemContainerStyle="{StaticResource AxialSettingsListViewItemStyle}"
-                                      SelectionMode="Single">
+                                      SelectionMode="Single"
+                                      SelectionChanged="ConnectionColorRulesListView_SelectionChanged"
+                                      MouseDoubleClick="ConnectionColorRulesListView_MouseDoubleClick">
                                 <ListView.View>
                                     <GridView ColumnHeaderContainerStyle="{StaticResource AxialSettingsGridViewHeaderStyle}">
-                                        <GridViewColumn Header="" Width="40">
+                                        <GridViewColumn Header="Enabled" Width="65">
                                             <GridViewColumn.CellTemplate>
                                                 <DataTemplate>
-                                                    <CheckBox IsChecked="{Binding IsEnabled}" />
+                                                    <CheckBox IsChecked="{Binding IsEnabled}" Click="ConnectionColorRuleEnabled_Click" />
                                                 </DataTemplate>
                                             </GridViewColumn.CellTemplate>
                                         </GridViewColumn>
@@ -805,21 +878,21 @@
                         </DockPanel>
                     </GroupBox>
 
-                    <Button Grid.Row="3"
-                            x:Name="button_SaveConnectionColorRules"
-                            Click="Button_SaveConnectionColorRules_Click"
-                            Width="80"
-                            Height="24"
-                            Margin="0,10,0,0"
-                            HorizontalAlignment="Left"
-                            FontWeight="Bold">
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,10,0,0">
+                        <Button x:Name="button_SaveConnectionColorRules"
+                                Click="Button_SaveConnectionColorRules_Click"
+                                Style="{DynamicResource AxialPrimaryButtonStyle}"
+                                Width="90" Height="24" FontWeight="Bold">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
 							<Viewbox Width="16" Height="16" Margin="0,0,4,0">
-								<Path Style="{StaticResource AxialSaveIconPathStyle}" Data="{StaticResource SaveIconGeometry}"/>
+								<Path Fill="{DynamicResource AxialThemePrimaryButtonForegroundBrush}" Stretch="Fill" SnapsToDevicePixels="True" Data="{StaticResource SaveIconGeometry}"/>
 							</Viewbox>
-                            <TextBlock Text="Save" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
+                                <TextBlock Text="Save" VerticalAlignment="Center" Foreground="{DynamicResource AxialThemePrimaryButtonForegroundBrush}"/>
+                            </StackPanel>
+                        </Button>
+                        <TextBlock x:Name="ConnectionColorSaveStatus" Margin="10,0,0,0" VerticalAlignment="Center"
+                                   Opacity="0.8" Text="No unsaved changes"/>
+                    </StackPanel>
                 </Grid>
             </TabItem>
 

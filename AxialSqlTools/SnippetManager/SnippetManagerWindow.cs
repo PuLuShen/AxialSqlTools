@@ -9,7 +9,7 @@ namespace AxialSqlTools
     {
         public SnippetManagerWindow() : base(null)
         {
-            this.Caption = "Snippet Manager";
+            this.Caption = LocalizationManager.T("Snippet Manager");
             this.Content = new SnippetManagerWindowControl();
         }
     }

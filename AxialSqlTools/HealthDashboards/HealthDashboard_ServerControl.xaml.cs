@@ -1,4 +1,4 @@
-﻿namespace AxialSqlTools
+namespace AxialSqlTools
 {
     using Microsoft.SqlServer.Management.Smo.RegSvrEnum;
     using Microsoft.SqlServer.Management.UI.VSIntegration;
@@ -795,7 +795,7 @@
         [SuppressMessage("StyleCop.CSharp.NamingRules", "SA1300:ElementMustBeginWithUpperCaseLetter", Justification = "Default event handler naming pattern")]
         private void button1_Click(object sender, RoutedEventArgs e)
         {
-            MessageBox.Show(
+            LocalizedMessageBox.Show(
                 string.Format(System.Globalization.CultureInfo.CurrentUICulture, "Invoked '{0}'", this.ToString()),
                 "HealthDashboard_Server");
 
@@ -865,7 +865,7 @@
             }
             catch (Exception ex)
             {
-                MessageBox.Show(ex.Message, "An error occurred");
+                LocalizedMessageBox.Show(ex.Message, "An error occurred");
                 error = true;
             }
 

@@ -1,4 +1,4 @@
-﻿namespace AxialSqlTools
+namespace AxialSqlTools
 {
     using Microsoft.VisualStudio.Shell;
     using System;
@@ -201,7 +201,7 @@
             double fileSizeInKilobytes = fileInfo.Length / 1024.0;
             string formattedSize = fileSizeInKilobytes.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + "KB";
 
-            FullFileNameTitleLabel.Content = string.Format(System.Globalization.CultureInfo.CurrentUICulture, "File ({0}):", formattedSize);
+            FullFileNameTitleLabel.Content = string.Format(System.Globalization.CultureInfo.CurrentUICulture, LocalizationManager.T("File ({0}):"), formattedSize);
 
             EmailServerOptions.Items.Clear();
 
@@ -273,7 +273,7 @@
             }
             else
             {
-                SendWarningLabel.Content = "Unable to send the email because SMTP wasn't configured and no Database Mail Profiles have been found on the server.";                
+                SendWarningLabel.Content = LocalizationManager.T("Unable to send the email because SMTP wasn't configured and no Database Mail Profiles have been found on the server.");
                 ButtonSend.IsEnabled = false;
             }
         }
@@ -357,7 +357,7 @@
 
                 smtp.Send(emailMessage);
 
-                MessageBox.Show($"Email has been sent!", "Done");
+                LocalizedMessageBox.Show($"Email has been sent!", "Done");
 
                 try
                 {
@@ -374,7 +374,7 @@
             catch (Exception ex)
             {
                 string msg = $"Error message: {ex.Message} \nInnerException: {ex.InnerException}";
-                MessageBox.Show(msg, "Something went wrong");
+                LocalizedMessageBox.Show(msg, "Something went wrong");
             }
 
             return false;
@@ -443,7 +443,7 @@
 
                     }
 
-                    MessageBox.Show("Email has been queued via Database Mail!", "Done");
+                    LocalizedMessageBox.Show("Email has been queued via Database Mail!", "Done");
 
                     return true;
                 }
@@ -452,7 +452,7 @@
             catch (Exception ex)
             {
                 string msg = $"Error message: {ex.Message} \nInnerException: {ex.InnerException}";
-                MessageBox.Show(msg, "Something went wrong");
+                LocalizedMessageBox.Show(msg, "Something went wrong");
             }
 
             return false;
@@ -468,13 +468,13 @@
 
             if (!allValid)
             {
-                MessageBox.Show("Can't parse the recipient's email address.", "Invalid Email");
+                LocalizedMessageBox.Show("Can't parse the recipient's email address.", "Invalid Email");
                 return;
             }
 
             if (string.IsNullOrEmpty(EmailSubject.Text))
             {
-                MessageBox.Show("Please provide the email subject.", "Subject Required");
+                LocalizedMessageBox.Show("Please provide the email subject.", "Subject Required");
                 return;
             }
 
@@ -524,7 +524,7 @@
                 success = SendEmailViaDatabaseMail(connectionInfo, mailConfig, allEmailsConcatenated, ccEmail, EmailSubject.Text, EmailBodyContent, exportedFilename);
             
             else {
-                MessageBox.Show("Invalid mail config", "Error");
+                LocalizedMessageBox.Show("Invalid mail config", "Error");
             }
 
             if (success)

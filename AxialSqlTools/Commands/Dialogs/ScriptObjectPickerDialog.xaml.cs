@@ -12,7 +12,7 @@ namespace AxialSqlTools
         {
             InitializeComponent();
 
-            HeaderTextBlock.Text = "Select the object to script.";
+            HeaderTextBlock.Text = LocalizationManager.T("Select the object to script.");
             ObjectsListBox.ItemsSource = matches.ToList();
         }
 
@@ -25,7 +25,7 @@ namespace AxialSqlTools
             }
             else
             {
-                MessageBox.Show("Select an object to script.", "Script Object");
+                LocalizedMessageBox.Show("Select an object to script.", "Script Object");
             }
         }
 

@@ -270,7 +270,7 @@ ORDER BY sd.[name];
 
         public class AsteriskExpansionSettings
         {
-            public bool useAsteriskExpansion = false;
+            public bool useAsteriskExpansion = true;
             public SnippetReplaceKey triggerKey = SnippetReplaceKey.Tab;
         }
 
@@ -499,6 +499,29 @@ ORDER BY sd.[name];
             {
                 return false;
             }
+        }
+
+        public class SqlCompletionSettings
+        {
+            public bool enabled = true;
+            public bool automaticPopup = true;
+            public bool useSquareBrackets = true;
+            public bool learnFromUsage = true;
+            public int delayMilliseconds = 120;
+            public int maximumItems = 200;
+        }
+
+        public static string GetUiLanguage()
+        {
+            string language = GetRegisterValue("UiLanguage");
+            return string.Equals(language, LocalizationManager.EnglishLanguage, StringComparison.OrdinalIgnoreCase)
+                ? LocalizationManager.EnglishLanguage
+                : LocalizationManager.ChineseLanguage;
+        }
+
+        public static bool SaveUiLanguage(string language)
+        {
+            return SaveRegisterValue("UiLanguage", language);
         }
 
         // ----------------------------------------------------------------------
@@ -818,7 +841,9 @@ ORDER BY sd.[name];
         public static string GetQueryHistoryStorageMode()
         {
             string mode = GetRegisterValue("QueryHistoryStorageMode");
-            return string.IsNullOrWhiteSpace(mode) ? "Database" : mode;
+            // Local files make query history useful immediately for new installations.
+            // Existing users retain their explicitly saved storage mode.
+            return string.IsNullOrWhiteSpace(mode) ? "TextFiles" : mode;
         }
 
         public static bool SaveQueryHistoryStorageMode(string storageMode)
@@ -829,6 +854,28 @@ ORDER BY sd.[name];
             }
 
             return SaveRegisterValue("QueryHistoryStorageMode", storageMode);
+        }
+
+        public static string GetQueryHistoryShortcut()
+        {
+            string shortcut = GetRegisterValue("QueryHistoryShortcut");
+            return string.IsNullOrWhiteSpace(shortcut) ? "Ctrl+Alt+H" : shortcut;
+        }
+
+        public static bool SaveQueryHistoryShortcut(string shortcut)
+        {
+            return SaveRegisterValue("QueryHistoryShortcut", shortcut ?? string.Empty);
+        }
+
+        public static string GetScriptObjectShortcut()
+        {
+            string shortcut = GetRegisterValue("ScriptObjectShortcut");
+            return string.IsNullOrWhiteSpace(shortcut) ? "Ctrl+Shift+Alt+S" : shortcut;
+        }
+
+        public static bool SaveScriptObjectShortcut(string shortcut)
+        {
+            return SaveRegisterValue("ScriptObjectShortcut", string.IsNullOrWhiteSpace(shortcut) ? "None" : shortcut);
         }
 
         public static string GetQueryHistoryTextFileFolder()
@@ -997,6 +1044,49 @@ ORDER BY sd.[name];
             {
                 return false;
             }
+        }
+
+        public static System.Drawing.Size GetCompletionWindowSize()
+        {
+            const int defaultWidth = 560;
+            const int defaultHeight = 600;
+            string value = GetRegisterValue("CompletionWindowSize");
+            string[] parts = (value ?? string.Empty).Split('x');
+            if (parts.Length == 2 && int.TryParse(parts[0], out int width) && int.TryParse(parts[1], out int height))
+            {
+                // Migrate the first popup default to the taller layout.
+                if (width == 560 && (height == 320 || height == 400))
+                    height = defaultHeight;
+
+                return new System.Drawing.Size(
+                    Math.Max(360, Math.Min(1200, width)),
+                    Math.Max(220, Math.Min(900, height)));
+            }
+
+            return new System.Drawing.Size(defaultWidth, defaultHeight);
+        }
+
+        public static bool SaveCompletionWindowSize(System.Drawing.Size size)
+        {
+            int width = Math.Max(360, Math.Min(1200, size.Width));
+            int height = Math.Max(220, Math.Min(900, size.Height));
+            return SaveRegisterValue("CompletionWindowSize", width + "x" + height);
+        }
+
+        public static SqlCompletionSettings GetSqlCompletionSettings()
+        {
+            try
+            {
+                var value = JsonConvert.DeserializeObject<SqlCompletionSettings>(GetRegisterValue("SqlCompletionSettings"));
+                if (value != null) { value.delayMilliseconds = Math.Max(0, Math.Min(1000, value.delayMilliseconds)); value.maximumItems = Math.Max(20, Math.Min(1000, value.maximumItems)); return value; }
+            }
+            catch { }
+            return new SqlCompletionSettings();
+        }
+
+        public static bool SaveSqlCompletionSettings(SqlCompletionSettings settings)
+        {
+            return SaveRegisterValue("SqlCompletionSettings", JsonConvert.SerializeObject(settings ?? new SqlCompletionSettings()));
         }
 
     }

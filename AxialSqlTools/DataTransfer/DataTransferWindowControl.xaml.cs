@@ -1,4 +1,4 @@
-﻿namespace AxialSqlTools
+namespace AxialSqlTools
 {
     using Microsoft.VisualStudio.Shell;
     using MySqlConnector;
@@ -174,7 +174,7 @@
             var filtered = connections.FindAll(conn => conn.Provider == provider);
             if (filtered.Count == 0)
             {
-                MessageBox.Show("No saved connections found. Use \"Edit Saved Connections\" to add one.", "Data Transfer");
+                LocalizedMessageBox.Show("No saved connections found. Use \"Edit Saved Connections\" to add one.", "Data Transfer");
                 return null;
             }
 
@@ -352,7 +352,7 @@
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
+                    LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
                 }
 
                 Button_CopyData.Visibility = System.Windows.Visibility.Visible;
@@ -723,11 +723,11 @@
             }
             catch (OperationCanceledException)
             {
-                MessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
+                LocalizedMessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
+                LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
             }
             finally
             {
@@ -842,7 +842,7 @@
                                             if (!string.Equals(localInfileValue, "ON", StringComparison.OrdinalIgnoreCase) &&
                                                 !string.Equals(localInfileValue, "1", StringComparison.OrdinalIgnoreCase))
                                             {
-                                                MessageBox.Show(
+                                                LocalizedMessageBox.Show(
                                                     "MySQL local infile is disabled. Enable local_infile on the server (and ensure AllowLoadLocalInfile is true) to use bulk copy.",
                                                     "DataTransferWindow");
                                                 return;
@@ -884,11 +884,11 @@
             }
             catch (OperationCanceledException)
             {
-                MessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
+                LocalizedMessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
+                LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
             }
             finally
             {
@@ -1027,11 +1027,11 @@
             }
             catch (OperationCanceledException)
             {
-                MessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
+                LocalizedMessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
+                LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
             }
             finally
             {
@@ -1170,11 +1170,11 @@
             }
             catch (OperationCanceledException)
             {
-                MessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
+                LocalizedMessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
+                LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
             }
             finally
             {

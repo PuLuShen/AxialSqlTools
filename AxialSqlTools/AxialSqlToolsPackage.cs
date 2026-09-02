@@ -104,6 +104,9 @@ namespace AxialSqlTools
         private const string QueryHistoryStorageModeDisabled = "Disabled";
 
         private static ConcurrentQueue<QueryHistoryEntry> _queryHistoryQueue = new ConcurrentQueue<QueryHistoryEntry>();
+        private static int _queryHistoryProcessorRunning;
+        public static string QueryHistoryLastPersistenceError { get; private set; }
+        public static DateTime? QueryHistoryLastPersistenceSuccess { get; private set; }
         private static int _statisticsCaptureVersion;
         private static int _pendingStatisticsCaptureVersion;
         private static readonly object _statisticsCaptureSyncRoot = new object();
@@ -158,16 +161,34 @@ namespace AxialSqlTools
         private static void EnqueueDataForProcessing(QueryHistoryEntry data)
         {
             _queryHistoryQueue.Enqueue(data);
-            _ = Task.Run(() => ProcessDataAsync());
+            StartQueryHistoryProcessor();
+        }
+
+        private static void StartQueryHistoryProcessor()
+        {
+            if (Interlocked.CompareExchange(ref _queryHistoryProcessorRunning, 1, 0) == 0)
+            {
+                _ = Task.Run(() => ProcessDataAsync());
+            }
         }
 
         private static async Task ProcessDataAsync()
         {
-            while (_queryHistoryQueue.TryDequeue(out QueryHistoryEntry data))
+            try
             {
-                await PersistDataAsync(data);
+                while (_queryHistoryQueue.TryDequeue(out QueryHistoryEntry data))
+                {
+                    await PersistDataAsync(data);
+                }
             }
-
+            finally
+            {
+                Interlocked.Exchange(ref _queryHistoryProcessorRunning, 0);
+                if (!_queryHistoryQueue.IsEmpty)
+                {
+                    StartQueryHistoryProcessor();
+                }
+            }
         }
 
         private static async Task PersistDataAsync(QueryHistoryEntry data)
@@ -183,6 +204,8 @@ namespace AxialSqlTools
                 if (string.Equals(storageMode, QueryHistoryStorageModeTextFiles, StringComparison.OrdinalIgnoreCase))
                 {
                     await PersistDataAsJsonLineAsync(data);
+                    QueryHistoryLastPersistenceError = null;
+                    QueryHistoryLastPersistenceSuccess = DateTime.Now;
                     return;
                 }
 
@@ -190,9 +213,10 @@ namespace AxialSqlTools
                 string qhTableName = SettingsManager.GetQueryHistoryTableNameOrDefault();
                 string indexNameGuid = Guid.NewGuid().ToString(); // too much complexity trying to incorporate all possible table name combinations into proper index name
 
-                if (string.IsNullOrEmpty(connectionString))
-                {
-                    return;
+                    if (string.IsNullOrEmpty(connectionString))
+                    {
+                        QueryHistoryLastPersistenceError = "Database storage is selected but no connection is configured.";
+                        return;
                 }
 
                 using (SqlConnection connection = new SqlConnection(connectionString))
@@ -242,11 +266,14 @@ namespace AxialSqlTools
                         command.Parameters.AddWithValue("@LoginName", data.LoginName ?? string.Empty);
                         command.Parameters.AddWithValue("@WorkstationId", data.WorkstationId ?? string.Empty);
                         await command.ExecuteNonQueryAsync();
+                        QueryHistoryLastPersistenceError = null;
+                        QueryHistoryLastPersistenceSuccess = DateTime.Now;
                     }
                 }
             }
             catch (Exception ex)
             {
+                QueryHistoryLastPersistenceError = ex.Message;
                 _logger.Error(ex, "[QueryHistory-PersistDataAsync]: An exception occurred");
             }
 
@@ -307,6 +334,7 @@ namespace AxialSqlTools
 
             PackageInstance = this;
 
+            LocalizationManager.Initialize();
             InitializeLogging();
 
             try
@@ -327,6 +355,7 @@ namespace AxialSqlTools
                 await ResultGridCopyAsInsertCommand.InitializeAsync(this);
                 await SqlServerBuildsWindowCommand.InitializeAsync(this);
                 await QueryHistoryWindowCommand.InitializeAsync(this);
+                ShortcutManager.ApplyQueryHistoryShortcut(SettingsManager.GetQueryHistoryShortcut(), out _);
                 await StatisticsSummaryWindowCommand.InitializeAsync(this);
                 await DatabaseScripterToolWindowCommand.InitializeAsync(this);
                 await QuickSearchWindowCommand.InitializeAsync(this);
@@ -425,6 +454,10 @@ namespace AxialSqlTools
         {
             if (disposing)
             {
+                foreach (KeypressCommandFilter filter in _commandFilters.ToArray())
+                    filter.Dispose();
+                _commandFilters.Clear();
+                _registeredTextViews.Clear();
                 UpdateChecker.LaunchDeferredUpdateOnClose();
             }
 
@@ -611,7 +644,9 @@ namespace AxialSqlTools
                 _logger.Error(ex, "Failed to reattach statistics handler during window activation.");
             }
 
-            if (SettingsManager.GetUseSnippets())
+            // The editor command filter owns completion as well as optional snippets,
+            // so it must be attached independently of the snippet setting.
+            if (GotFocus != null)
             {
                 try
                 {
@@ -630,6 +665,7 @@ namespace AxialSqlTools
                                 _registeredTextViews.Add(textView);
                                 var CommandFilter = new KeypressCommandFilter(this, textView);
                                 CommandFilter.AddToChain();
+                                _commandFilters.Add(CommandFilter);
                             }
                         }
                     }
@@ -663,6 +699,18 @@ namespace AxialSqlTools
             // Re-color remaining tabs after a tab closes
             try
             {
+                var docData = Window == null ? null : GridAccess.GetProperty(Window.Object, "DocData");
+                var textManager = docData == null ? null : GridAccess.GetProperty(docData, "TextManager") as IVsTextManager;
+                if (textManager != null && textManager.GetActiveView(0, null, out IVsTextView closingView) == VSConstants.S_OK)
+                {
+                    for (int i = _commandFilters.Count - 1; i >= 0; i--)
+                    {
+                        if (!_commandFilters[i].IsFor(closingView)) continue;
+                        _commandFilters[i].Dispose();
+                        _commandFilters.RemoveAt(i);
+                    }
+                    _registeredTextViews.Remove(closingView);
+                }
                 GridAccess.ScheduleReapplyAllTabColors();
             }
             catch (Exception ex)

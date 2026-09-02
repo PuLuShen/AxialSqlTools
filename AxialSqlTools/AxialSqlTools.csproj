@@ -30,6 +30,7 @@
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <RuntimeIdentifier>win</RuntimeIdentifier>
     <RuntimeIdentifiers>win</RuntimeIdentifiers>
+    <SsmsInstallRoot Condition="'$(SsmsInstallRoot)' == ''">C:\Program Files\Microsoft SQL Server Management Studio 22\Release</SsmsInstallRoot>
     <GeneratePkgDefFile>true</GeneratePkgDefFile>
     <UseCodebase>true</UseCodebase>
     <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
@@ -50,7 +51,7 @@
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <CopyVsixExtensionFiles>True</CopyVsixExtensionFiles>
-    <CopyVsixExtensionLocation>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Extensions\AxialSqlTools\</CopyVsixExtensionLocation>
+    <CopyVsixExtensionLocation>$(SsmsInstallRoot)\Common7\IDE\Extensions\AxialSqlTools\</CopyVsixExtensionLocation>
     <DeployExtension>False</DeployExtension>
     <UseWinFormsOutOfProcDesigner>True</UseWinFormsOutOfProcDesigner>
   </PropertyGroup>
@@ -152,8 +153,10 @@
     <Compile Include="Modules\GridAccess.cs" />
     <Compile Include="Modules\KeypressCommandFilter.cs" />
     <Compile Include="Modules\MetricsService.cs" />
+    <Compile Include="Modules\LocalizationManager.cs" />
     <Compile Include="Modules\ToolWindowThemeSupport.cs" />
     <Compile Include="Modules\ScriptFactoryAccess.cs" />
+    <Compile Include="Modules\ShortcutManager.cs" />
     <Compile Include="Modules\SettingsManager.cs" />
     <Compile Include="Modules\SQLBuilds.cs" />
     <Compile Include="Modules\TsqlFormatter.cs" />
@@ -212,6 +215,115 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <None Include="Installer\Install-Or-Reinstall.ps1">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="Installer\安装或重装.cmd">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <Compile Include="Completion\CompletionController.cs" />
+    <Compile Include="Completion\CompletionModels.cs" />
+    <Compile Include="Completion\CompletionPresenter.cs" />
+    <Compile Include="Completion\CompletionUsageStore.cs" />
+    <Compile Include="Completion\SqlCompletionAnalyzer.cs" />
+    <Compile Include="Completion\SqlMetadataCache.cs" />
+    <Compile Include="Completion\SqlTextContext.cs" />
+    <Reference Include="ICSharpCode.AvalonEdit">
+      <HintPath>$(NuGetPackageRoot)avalonedit\6.3.1.120\lib\net462\ICSharpCode.AvalonEdit.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="OxyPlot">
+      <HintPath>$(NuGetPackageRoot)oxyplot.core\2.2.0\lib\net462\OxyPlot.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="OxyPlot.Wpf.Shared">
+      <HintPath>$(NuGetPackageRoot)oxyplot.wpf.shared\2.2.0\lib\net462\OxyPlot.Wpf.Shared.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="OxyPlot.Wpf">
+      <HintPath>$(NuGetPackageRoot)oxyplot.wpf\2.2.0\lib\net462\OxyPlot.Wpf.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <!-- Explicit NuGet references are required by the legacy WPF temporary project. -->
+    <Reference Include="DocumentFormat.OpenXml">
+      <HintPath>$(NuGetPackageRoot)documentformat.openxml\3.5.1\lib\net46\DocumentFormat.OpenXml.dll</HintPath>
+    </Reference>
+    <Reference Include="DocumentFormat.OpenXml.Framework">
+      <HintPath>$(NuGetPackageRoot)documentformat.openxml.framework\3.5.1\lib\net46\DocumentFormat.OpenXml.Framework.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Bcl.AsyncInterfaces">
+      <HintPath>$(NuGetPackageRoot)microsoft.bcl.asyncinterfaces\10.0.10\lib\net462\Microsoft.Bcl.AsyncInterfaces.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Bcl.HashCode">
+      <HintPath>$(NuGetPackageRoot)microsoft.bcl.hashcode\1.1.1\ref\net461\Microsoft.Bcl.HashCode.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions">
+      <HintPath>$(NuGetPackageRoot)microsoft.extensions.dependencyinjection.abstractions\8.0.2\lib\net462\Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath>
+    </Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions">
+      <HintPath>$(NuGetPackageRoot)microsoft.extensions.logging.abstractions\8.0.2\lib\net462\Microsoft.Extensions.Logging.Abstractions.dll</HintPath>
+    </Reference>
+    <Reference Include="MySqlConnector">
+      <HintPath>$(NuGetPackageRoot)mysqlconnector\2.6.1\lib\net471\MySqlConnector.dll</HintPath>
+    </Reference>
+    <Reference Include="NLog">
+      <HintPath>$(NuGetPackageRoot)nlog\6.1.4\lib\net46\NLog.dll</HintPath>
+    </Reference>
+    <Reference Include="Npgsql">
+      <HintPath>$(NuGetPackageRoot)npgsql\8.0.7\lib\netstandard2.0\Npgsql.dll</HintPath>
+    </Reference>
+    <Reference Include="Octokit">
+      <HintPath>$(NuGetPackageRoot)octokit\14.0.0\lib\netstandard2.0\Octokit.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Buffers">
+      <HintPath>$(NuGetPackageRoot)system.buffers\4.6.1\lib\net462\System.Buffers.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Collections.Immutable">
+      <HintPath>$(NuGetPackageRoot)system.collections.immutable\10.0.10\lib\net462\System.Collections.Immutable.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Diagnostics.DiagnosticSource">
+      <HintPath>$(NuGetPackageRoot)system.diagnostics.diagnosticsource\8.0.1\lib\net462\System.Diagnostics.DiagnosticSource.dll</HintPath>
+    </Reference>
+    <Reference Include="System.IO.Pipelines">
+      <HintPath>$(NuGetPackageRoot)system.io.pipelines\10.0.10\lib\net462\System.IO.Pipelines.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Memory">
+      <HintPath>$(NuGetPackageRoot)system.memory\4.6.3\lib\net462\System.Memory.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Runtime">
+      <HintPath>$(FrameworkPathOverride)\Facades\System.Runtime.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Threading.Tasks">
+      <HintPath>$(FrameworkPathOverride)\Facades\System.Threading.Tasks.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Data.Common">
+      <HintPath>$(FrameworkPathOverride)\Facades\System.Data.Common.dll</HintPath>
+    </Reference>
+    <Reference Include="netstandard">
+      <HintPath>$(FrameworkPathOverride)\Facades\netstandard.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Numerics.Vectors">
+      <HintPath>$(NuGetPackageRoot)system.numerics.vectors\4.6.1\lib\net462\System.Numerics.Vectors.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Runtime.CompilerServices.Unsafe">
+      <HintPath>$(NuGetPackageRoot)system.runtime.compilerservices.unsafe\6.1.2\lib\net462\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Security.Cryptography.ProtectedData">
+      <HintPath>$(NuGetPackageRoot)system.security.cryptography.protecteddata\10.0.10\lib\net462\System.Security.Cryptography.ProtectedData.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Text.Encodings.Web">
+      <HintPath>$(NuGetPackageRoot)system.text.encodings.web\10.0.10\lib\net462\System.Text.Encodings.Web.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Text.Json">
+      <HintPath>$(NuGetPackageRoot)system.text.json\10.0.10\lib\net462\System.Text.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Threading.Channels">
+      <HintPath>$(NuGetPackageRoot)system.threading.channels\8.0.0\lib\net462\System.Threading.Channels.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Threading.Tasks.Extensions">
+      <HintPath>$(NuGetPackageRoot)system.threading.tasks.extensions\4.6.3\lib\net462\System.Threading.Tasks.Extensions.dll</HintPath>
+    </Reference>
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="EnvDTE">
       <HintPath>$(NuGetPackageRoot)envdte\17.14.40260\lib\net472\envdte.dll</HintPath>
@@ -222,120 +334,121 @@
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.SqlServer.Dac">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Extensions\Application\Microsoft.SqlServer.Dac.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Extensions\Application\Microsoft.SqlServer.Dac.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.SqlServer.Dac.Extensions">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Extensions\Application\Microsoft.SqlServer.Dac.Extensions.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Extensions\Application\Microsoft.SqlServer.Dac.Extensions.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.Data.Tools.Schema.Sql">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Extensions\Application\Microsoft.Data.Tools.Schema.Sql.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Extensions\Application\Microsoft.Data.Tools.Schema.Sql.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.Data.Tools.Schema.Tasks.Sql">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Extensions\Application\Microsoft.Data.Tools.Schema.Tasks.Sql.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Extensions\Application\Microsoft.Data.Tools.Schema.Tasks.Sql.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.Data.Tools.Utilities">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Extensions\Application\Microsoft.Data.Tools.Utilities.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Extensions\Application\Microsoft.Data.Tools.Utilities.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.Data.SqlClient">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Microsoft.Data.SqlClient.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Microsoft.Data.SqlClient.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.CommandBars">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.CommandBars.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.CommandBars.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.Imaging">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Microsoft.VisualStudio.Imaging.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Microsoft.VisualStudio.Imaging.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.ImageCatalog">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Microsoft.VisualStudio.ImageCatalog.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Microsoft.VisualStudio.ImageCatalog.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.Imaging.Interop.14.0.DesignTime">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Imaging.Interop.14.0.DesignTime.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Imaging.Interop.14.0.DesignTime.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.Interop">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Interop.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Interop.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.OLE.Interop">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.OLE.Interop.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.OLE.Interop.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.Shell.15.0">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Shell.15.0.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Shell.15.0.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.Shell.Framework">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Shell.Framework.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Shell.Framework.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.Shell.Interop">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Shell.Interop.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Shell.Interop.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.TextManager.Interop">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.TextManager.Interop.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.TextManager.Interop.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualStudio.Threading">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Threading.17.x\Microsoft.VisualStudio.Threading.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PublicAssemblies\Microsoft.VisualStudio.Threading.17.x\Microsoft.VisualStudio.Threading.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.SqlServer.ConnectionInfo, Version=17.0.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Microsoft.SqlServer.ConnectionInfo.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Microsoft.SqlServer.ConnectionInfo.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.SqlServer.GridControl">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Microsoft.SqlServer.GridControl.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Microsoft.SqlServer.GridControl.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.SqlServer.Management.Sdk.Sfc, Version=17.0.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Microsoft.SqlServer.Management.Sdk.Sfc.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Microsoft.SqlServer.Management.Sdk.Sfc.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.SqlServer.RegSvrEnum, Version=17.0.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Microsoft.SqlServer.RegSvrEnum.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Microsoft.SqlServer.RegSvrEnum.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.SqlServer.Smo, Version=17.0.0.0, Culture=neutral, PublicKeyToken=89845dcd8080cc91, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Microsoft.SqlServer.Smo.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Microsoft.SqlServer.Smo.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="Microsoft.VisualBasic" />
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
     <Reference Include="Newtonsoft.Json">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\PrivateAssemblies\Newtonsoft.Json.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\PrivateAssemblies\Newtonsoft.Json.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="SQLEditors">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Extensions\Application\SQLEditors.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Extensions\Application\SQLEditors.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="SqlPackageBase">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\SqlPackageBase.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\SqlPackageBase.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="SqlWorkbench.Interfaces">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\SqlWorkbench.Interfaces.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\SqlWorkbench.Interfaces.dll</HintPath>
       <Private>False</Private>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />
     <Reference Include="System.Design" />
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Security" />
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.IO.Compression.FileSystem" />
     <Reference Include="System.Web" />
@@ -344,12 +457,15 @@
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Xml" />
     <Reference Include="Microsoft.SqlServer.TransactSql.ScriptDom">
-      <HintPath>C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\Extensions\Application\Microsoft.SqlServer.TransactSql.ScriptDom.dll</HintPath>
+      <HintPath>$(SsmsInstallRoot)\Common7\IDE\Extensions\Application\Microsoft.SqlServer.TransactSql.ScriptDom.dll</HintPath>
       <Private>True</Private>
     </Reference>
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="AvalonEdit">
       <Version>6.3.1.120</Version>
     </PackageReference>
@@ -539,9 +655,9 @@
   </ItemGroup>
   <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets" Condition="'$(VSToolsPath)' != ''" />
+  <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets" Condition="Exists('$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets')" />
   <PropertyGroup>
-    <PostBuildEvent>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; { $manifest = '$(ProjectDir)source.extension.vsixmanifest'; [xml]$xml = Get-Content $manifest; $version = $xml.PackageManifest.Metadata.Identity.Version; $vsix = Join-Path '$(TargetDir)' 'AxialSqlTools.vsix'; $zipName = 'AxialSqlTools_SSMS22_' + $version + '.zip'; $dest = Join-Path $env:USERPROFILE ('Desktop\' + $zipName); Compress-Archive -Path $vsix -DestinationPath $dest -Force }"
+    <PostBuildEvent>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; { $ErrorActionPreference = 'Stop'; $manifest = '$(ProjectDir)source.extension.vsixmanifest'; [xml]$xml = Get-Content $manifest; $version = $xml.PackageManifest.Metadata.Identity.Version; $vsix = Join-Path '$(TargetDir)' 'AxialSqlTools.vsix'; $installerScript = Join-Path '$(TargetDir)' 'Installer\Install-Or-Reinstall.ps1'; $installerCommand = Join-Path '$(TargetDir)' 'Installer\安装或重装.cmd'; $baseName = 'AxialSqlTools_SSMS22_' + $version; $desktop = [Environment]::GetFolderPath('DesktopDirectory'); $destinationDirectory = if ([string]::IsNullOrWhiteSpace($desktop) -or -not (Test-Path -LiteralPath $desktop)) { '$(TargetDir)' } else { $desktop }; $versionedVsix = Join-Path $destinationDirectory ($baseName + '.vsix'); $dest = Join-Path $destinationDirectory ($baseName + '.zip'); Copy-Item -LiteralPath $vsix -Destination $versionedVsix -Force; Compress-Archive -LiteralPath @($vsix, $installerScript, $installerCommand) -DestinationPath $dest -Force }"
 </PostBuildEvent>
   </PropertyGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

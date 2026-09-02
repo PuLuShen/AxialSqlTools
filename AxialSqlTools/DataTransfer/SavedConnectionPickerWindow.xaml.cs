@@ -25,7 +25,7 @@ namespace AxialSqlTools
             }
             else
             {
-                MessageBox.Show("Select a saved connection.", "Saved Connections");
+                LocalizedMessageBox.Show("Select a saved connection.", "Saved Connections");
             }
         }
 

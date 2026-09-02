@@ -1,4 +1,4 @@
-﻿using ICSharpCode.AvalonEdit.Highlighting;
+using ICSharpCode.AvalonEdit.Highlighting;
 using ICSharpCode.AvalonEdit.Highlighting.Xshd;
 using Microsoft.SqlServer.Management.UI.VSIntegration;
 using Microsoft.SqlServer.Management.UI.VSIntegration.Editors;
@@ -66,14 +66,14 @@ namespace AxialSqlTools
             var ci = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
             if (ci == null)
             {
-                MessageBox.Show("Please select a server or database node in Object Explorer first.", "Quick Search");
+                LocalizedMessageBox.Show("Please select a server or database node in Object Explorer first.", "Quick Search");
                 return;
             }
 
             selectedConnectionString = ci.FullConnectionString;
             selectedDatabase = ci.Database;
             selectedServer = ci.ServerName;
-            Label_ConnectionDescription.Content = $"Server: [{selectedServer}] / Database: [{selectedDatabase}]";
+            Label_ConnectionDescription.Content = LocalizationManager.T($"Server: [{selectedServer}] / Database: [{selectedDatabase}]");
             SearchInputsGrid.IsEnabled = true;
         }
 
@@ -92,20 +92,20 @@ namespace AxialSqlTools
 
             if (string.IsNullOrWhiteSpace(selectedConnectionString))
             {
-                MessageBox.Show("Select a connection from Object Explorer first.", "Quick Search");
+                LocalizedMessageBox.Show("Select a connection from Object Explorer first.", "Quick Search");
                 return;
             }
 
             string searchText = TextBox_SearchText.Text?.Trim();
             if (string.IsNullOrEmpty(searchText))
             {
-                MessageBox.Show("Enter text to search.", "Quick Search");
+                LocalizedMessageBox.Show("Enter text to search.", "Quick Search");
                 return;
             }
 
             if (!AnyTypeSelected())
             {
-                MessageBox.Show("Select at least one object type.", "Quick Search");
+                LocalizedMessageBox.Show("Select at least one object type.", "Quick Search");
                 return;
             }
 
@@ -113,10 +113,10 @@ namespace AxialSqlTools
 
             try
             {
-                Button_Search.Content = "Cancel";
+                Button_Search.Content = LocalizationManager.T("Cancel");
                 DataGrid_SearchResults.ItemsSource = null;
                 SqlEditor.Text = string.Empty;
-                TextBlock_ResultCount.Text = "Searching...";
+                TextBlock_ResultCount.Text = LocalizationManager.T("Searching...");
 
                 bool allDatabases = CheckBox_AllDatabases.IsChecked == true;
                 bool wholeWord = CheckBox_WholeWord.IsChecked == true;
@@ -130,7 +130,7 @@ namespace AxialSqlTools
                 CancellationToken cancellationToken = searchCancellationTokenSource.Token;
                 var progress = new Progress<string>(databaseName =>
                 {
-                    TextBlock_ResultCount.Text = $"Searching [{databaseName}]...";
+                    TextBlock_ResultCount.Text = LocalizationManager.T($"Searching [{databaseName}]...");
                 });
 
                 DataTable results = await Task.Run(() => ExecuteSearchAsync(searchText, allDatabases, wholeWord, useWildcards, includeProcs, includeViews, includeFunctions, includeTables, includeAgentJobSteps, progress, cancellationToken), cancellationToken);
@@ -139,25 +139,25 @@ namespace AxialSqlTools
             }
             catch (OperationCanceledException)
             {
-                TextBlock_ResultCount.Text = "Search canceled";
+                TextBlock_ResultCount.Text = LocalizationManager.T("Search canceled");
             }
             catch (Exception ex)
             {
                 if (ex.Message.Contains("Operation cancelled by user."))
                 {
-                    TextBlock_ResultCount.Text = "Search canceled";
+                    TextBlock_ResultCount.Text = LocalizationManager.T("Search canceled");
                 }
                 else
                 {
-                    MessageBox.Show($"Search failed: {ex.Message}", "Quick Search");
-                    TextBlock_ResultCount.Text = "Search failed";
+                    LocalizedMessageBox.Show($"Search failed: {ex.Message}", "Quick Search");
+                    TextBlock_ResultCount.Text = LocalizationManager.T("Search failed");
                 }           
             }
             finally
             {
                 searchCancellationTokenSource?.Dispose();
                 searchCancellationTokenSource = null;
-                Button_Search.Content = "Search";
+                Button_Search.Content = LocalizationManager.T("Search");
             }
         }
 
@@ -519,7 +519,7 @@ WHERE js.[command] LIKE @pattern ESCAPE '!'
 
                 if (matchLocation == "JobStep")
                 {
-                    MessageBox.Show($"TODO - WIP", "WIP");
+                    LocalizedMessageBox.Show($"TODO - WIP", "WIP");
                     return;
                 }
 
@@ -537,7 +537,7 @@ WHERE js.[command] LIKE @pattern ESCAPE '!'
             }
             catch(Exception ex)
             {
-                MessageBox.Show($"Scripting failed: {ex.Message}", "Script Object");
+                LocalizedMessageBox.Show($"Scripting failed: {ex.Message}", "Script Object");
             }           
 
         }
