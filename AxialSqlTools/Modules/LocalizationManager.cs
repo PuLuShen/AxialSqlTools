@@ -46,11 +46,40 @@ namespace AxialSqlTools
             ["OK"] = "确定", ["Yes"] = "是", ["No"] = "否", ["Edit"] = "编辑",
             ["Delete"] = "删除", ["Remove"] = "移除", ["Refresh"] = "刷新",
             ["Search"] = "搜索", ["Loading..."] = "正在加载…", ["Error"] = "错误",
+            ["Opening definition script: {0}"] = "正在打开定义脚本：{0}",
+            ["Loading SQL completion metadata..."] = "正在加载 SQL 补全缓存…",
+            ["Loading SQL completion metadata for database {0}..."] = "正在加载数据库 {0} 的 SQL 补全缓存…",
+            ["Loading SQL completion metadata from linked server {0}..."] = "正在加载链接服务器 {0} 的 SQL 补全缓存…",
+            ["Refreshing SQL completion metadata..."] = "正在刷新 SQL 补全缓存…",
             ["Warning"] = "警告", ["Success"] = "成功", ["Status"] = "状态",
             ["Feature description in"] = "功能说明：", ["Wiki"] = "Wiki",
             ["Query Templates"] = "查询模板", ["Templates Folder:"] = "模板文件夹：",
+            ["Each .sql file is a template and subfolders are categories. Files stay in your folder and remain usable without the extension."] = "每个 .sql 文件都是一个模板，子文件夹就是分类。文件始终保存在你的文件夹中，即使没有安装插件也可直接使用。",
             ["Select folder..."] = "选择文件夹…", ["Useful TSQL scripts"] = "实用 T-SQL 脚本",
             ["Download TSQL scripts from GitHub"] = "从 GitHub 下载 T-SQL 脚本",
+            ["Query Template Picker"] = "查询模板选择器", ["Search:"] = "搜索：",
+            ["Search template names and folders"] = "搜索模板名称和文件夹",
+            ["All templates"] = "全部模板", ["Favorites"] = "收藏", ["Recent"] = "最近使用",
+            ["Templates folder:"] = "模板文件夹：", ["Choose folder..."] = "选择文件夹…",
+            ["Template"] = "模板", ["Folder"] = "文件夹", ["Modified"] = "修改时间",
+            ["Insert"] = "插入", ["Open in new query"] = "在新查询中打开",
+            ["Add favorite"] = "添加收藏", ["Remove favorite"] = "取消收藏", ["Show file"] = "定位文件",
+            ["Enter: insert   Ctrl+Enter: new query"] = "Enter：插入   Ctrl+Enter：新建查询",
+            ["{0} template(s)"] = "{0} 个模板", ["Preview unavailable"] = "无法预览",
+            ["Template inserted."] = "模板已插入。", ["Template opened in a new query."] = "模板已在新查询中打开。",
+            ["Could not insert the query template:"] = "无法插入查询模板：", ["Select templates folder"] = "选择模板文件夹",
+            ["Create template..."] = "创建模板…", ["Migrate folder..."] = "迁移文件夹…",
+            ["Creation uses the selected SQL, or the entire active query when nothing is selected."] = "优先使用当前选中的 SQL；没有选区时使用活动查询的全部内容。",
+            ["Create Query Template"] = "创建查询模板", ["Template name:"] = "模板名称：", ["Category:"] = "分类：",
+            ["Use a subfolder such as 运维\\阻塞; leave empty to save in the root folder."] = "可填写“运维\\阻塞”等子文件夹；留空则保存在根目录。",
+            ["Save template"] = "保存模板", ["New query template"] = "新建查询模板",
+            ["Enter a template name."] = "请输入模板名称。",
+            ["The template name contains characters that cannot be used in a file name."] = "模板名称包含文件名不允许使用的字符。",
+            ["Category must be a relative subfolder and cannot contain invalid path characters or '..'."] = "分类必须是相对路径，不能包含非法路径字符或“..”。",
+            ["A template with this name already exists. Replace it?"] = "同名模板已经存在，是否替换？",
+            ["Template created: "] = "模板已创建：", ["Could not create the query template:"] = "无法创建查询模板：",
+            ["Select the new templates folder"] = "选择新的模板文件夹",
+            ["Migrated {0} template(s) to the new folder. The original folder was kept at:\n{1}"] = "已将 {0} 个模板迁移到新文件夹。原文件夹仍保留在：\n{1}",
             ["Code Snippets"] = "代码片段", ["Use code snippets (SSMS restart required)"] = "启用代码片段（需要重启 SSMS）",
             ["Snippets Location:"] = "代码片段位置：", ["Replace snippets when pressing:"] = "按下以下按键时替换代码片段：",
             ["Replace SELECT * with column list"] = "将 SELECT * 替换为列列表",
@@ -92,7 +121,20 @@ namespace AxialSqlTools
             ["Save changes"] = "保存修改", ["Cancel edit"] = "取消编辑", ["Unsaved changes"] = "有未保存的更改",
             ["No unsaved changes"] = "没有未保存的更改",
             ["The connection color rules could not be saved. Please try again."] = "连接颜色规则无法保存，请重试。",
-            ["SQL completion"] = "SQL 自动补全",
+            ["SQL completion"] = "SQL 自动补全", ["SQL Completion"] = "SQL 自动补全",
+            ["Smart SQL completion"] = "智能 SQL 自动补全",
+            ["Enable smart SQL completion"] = "启用智能 SQL 自动补全",
+            ["Show completion automatically while typing"] = "输入时自动显示补全列表",
+            ["Trust the SQL Server certificate for completion metadata"] = "补全元数据连接信任 SQL Server 证书",
+            ["Applies only to the background connection used to load completion metadata."] = "仅应用于加载补全元数据的后台连接。",
+            ["Insert square brackets"] = "插入方括号",
+            ["Learn completion ranking locally"] = "在本地学习补全排序",
+            ["Popup delay (ms):"] = "弹出延迟（毫秒）：", ["Maximum matches:"] = "最大匹配数：",
+            ["Refresh completion metadata now"] = "立即刷新补全元数据",
+            ["Clear and refresh completion cache"] = "清除并刷新补全缓存",
+            ["The setting applies immediately. Ctrl+Space can still open completion when automatic popup is disabled."] = "设置立即生效。关闭自动弹出后，仍可使用 Ctrl+Space 打开补全列表。",
+            ["Popup delay must be between 0 and 1000 ms, and maximum matches between 20 and 1000."] = "弹出延迟必须介于 0 到 1000 毫秒之间，最大匹配数必须介于 20 到 1000 之间。",
+            ["The SQL completion setting could not be saved."] = "无法保存 SQL 自动补全设置。",
             ["Up/Down select | Enter/Tab insert | Esc close"] = "上下键选择 | Enter/Tab 插入 | Esc 关闭",
             ["Showing first 200 matches - keep typing to narrow results"] = "显示前 200 个匹配项，请继续输入以缩小范围",
             ["{0} matches | Up/Down select | Enter/Tab insert | Esc close"] = "{0} 个匹配项 | 上下键选择 | Enter/Tab 插入 | Esc 关闭",
@@ -192,11 +234,7 @@ namespace AxialSqlTools
             ["Source Query"] = "源查询", ["Target Table"] = "目标表", ["Source"] = "源", ["Destination table"] = "目标表",
             ["Select Source from Object Explorer"] = "从对象资源管理器选择源",
             ["Select Target from Object Explorer"] = "从对象资源管理器选择目标",
-            ["Source MySQL Connection"] = "源 MySQL 连接", ["Target MySQL Connection"] = "目标 MySQL 连接",
-            ["Source PostgreSQL Connection"] = "源 PostgreSQL 连接", ["Target PostgreSQL Connection"] = "目标 PostgreSQL 连接",
-            ["SQL Server -> SQL Server"] = "SQL Server → SQL Server", ["SQL Server -> MySQL"] = "SQL Server → MySQL",
-            ["SQL Server -> PostgreSQL"] = "SQL Server → PostgreSQL", ["MySQL -> SQL Server"] = "MySQL → SQL Server",
-            ["PostgreSQL -> SQL Server"] = "PostgreSQL → SQL Server",
+            ["SQL Server -> SQL Server"] = "SQL Server → SQL Server",
             ["Copy Data"] = "复制数据", ["(copy progress)"] = "（复制进度）", ["(have not been updated yet)"] = "（尚未更新）",
             ["Clear target table before inserting new records"] = "插入新记录前清空目标表",
             ["Create table if it does not exist"] = "表不存在时创建", ["Automatically create the table if it does not exist"] = "表不存在时自动创建",
@@ -257,16 +295,23 @@ namespace AxialSqlTools
             ["The data has been exported to Google Sheets."] = "数据已导出到 Google 表格。", ["Saved file:"] = "已保存文件：",
 
             // About window.
-            ["Open-source SSMS productivity tools for SQL Server professionals"] = "面向 SQL Server 专业人员的开源 SSMS 效率工具",
-            ["Project links"] = "项目链接", ["GitHub repository"] = "GitHub 仓库", ["Documentation and wiki"] = "文档与 Wiki",
-            ["Releases and changelog"] = "版本发布与更新日志", ["Contributing"] = "参与贡献", ["Join project discussions"] = "参与项目讨论",
-            ["Report a bug or request a feature"] = "报告问题或提出功能建议", ["License and support"] = "许可证与支持",
-            ["Read the full license on GitHub"] = "在 GitHub 阅读完整许可证", ["Version:"] = "版本：",
-            ["Axial SQL Tools is a community-oriented extension for SQL Server Management Studio. It brings practical workflow helpers, query utilities, data export options, dashboards, and source-control conveniences into the daily work of database developers and administrators."] = "Axial SQL Tools 是面向社区的 SQL Server Management Studio 扩展，为数据库开发人员和管理员的日常工作提供实用流程助手、查询工具、数据导出、仪表板和源代码管理功能。",
-            ["The project is developed in the open so users can inspect the code, report issues, propose improvements, review releases, and contribute fixes or documentation. Constructive participation from the SQL Server community is welcome."] = "本项目采用开放开发模式，用户可以查看代码、报告问题、提出改进、审阅版本并贡献修复或文档。欢迎 SQL Server 社区积极参与。",
-            ["Contributions can include bug reports, feature ideas, pull requests, documentation updates, testing notes, and query-library improvements. If Axial SQL Tools helps your workflow, consider sharing feedback or helping make the project better for the next user."] = "贡献形式包括问题报告、功能建议、拉取请求、文档更新、测试记录和查询库改进。如果 Axial SQL Tools 对你有帮助，欢迎分享反馈并帮助项目持续完善。",
-            ["License: Apache License 2.0. You may use, study, modify, and distribute the project under the terms of the license. The extension is provided as-is, without warranty."] = "许可证：Apache License 2.0。你可以按照许可证条款使用、研究、修改和分发本项目。本扩展按现状提供，不作任何保证。",
-            ["Support is community-based and best-effort. Please open a GitHub issue with clear reproduction steps, logs, SSMS version, and extension version when reporting problems."] = "支持由社区尽力提供。报告问题时，请提交 GitHub Issue，并附上清晰的复现步骤、日志、SSMS 版本和扩展版本。"
+            ["Axial SQL Tools | About"] = "Axial SQL Tools | 关于",
+            ["SSMS 22 productivity extension"] = "SSMS 22 效率扩展",
+            ["SSMS extension version {0}"] = "SSMS 扩展版本 {0}",
+            ["Current features"] = "当前功能",
+            ["SQL editing and navigation"] = "SQL 编辑与导航",
+            ["Smart completion · F12 Go to Definition · T-SQL formatting · snippets · SELECT * expansion"] = "智能补全 · F12 转到定义 · T-SQL 格式化 · 代码片段 · SELECT * 字段展开",
+            ["Results and data transfer"] = "结果处理与数据传输",
+            ["Excel · Google Sheets · email · temporary-table export · bulk data transfer"] = "Excel · Google 表格 · 邮件 · 临时表导出 · 批量数据传输",
+            ["Monitoring and diagnostics"] = "监控与诊断",
+            ["Query history · statistics summary · server health · connection colors · execution time"] = "查询历史 · 统计摘要 · 服务器健康 · 连接颜色 · 执行时间",
+            ["Workflow tools"] = "工作流工具",
+            ["Quick Search · object scripting · SQL Server version information · GitHub sync"] = "快速搜索 · 对象脚本 · SQL Server 版本信息 · GitHub 同步",
+            ["Current project"] = "当前项目",
+            ["Source repository"] = "源代码仓库",
+            ["Issues and feature requests"] = "问题与功能建议",
+            ["Releases"] = "版本发布",
+            ["Support the project"] = "赞赏支持"
         };
 
         public static string CurrentLanguage { get; private set; } = ChineseLanguage;
@@ -282,10 +327,24 @@ namespace AxialSqlTools
         {
             if (automaticLocalizationEnabled) return;
             EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
-                new RoutedEventHandler((sender, args) => Apply(sender as DependencyObject)));
+                new RoutedEventHandler(OnAutomaticLocalizationLoaded));
             EventManager.RegisterClassHandler(typeof(UserControl), FrameworkElement.LoadedEvent,
-                new RoutedEventHandler((sender, args) => Apply(sender as DependencyObject)));
+                new RoutedEventHandler(OnAutomaticLocalizationLoaded));
             automaticLocalizationEnabled = true;
+        }
+
+        private static void OnAutomaticLocalizationLoaded(object sender, RoutedEventArgs args)
+        {
+            var root = sender as DependencyObject;
+            if (root != null && IsExtensionUiType(root.GetType()))
+            {
+                Apply(root);
+            }
+        }
+
+        internal static bool IsExtensionUiType(Type type)
+        {
+            return type != null && type.Assembly == typeof(LocalizationManager).Assembly;
         }
 
         public static void SetLanguage(string language, bool persist = true)
@@ -342,16 +401,22 @@ namespace AxialSqlTools
             if (root == null || !visited.Add(root)) return;
             TranslateObject(root);
 
+            // Translating a TextBlock/Run or Header can rebuild its logical child
+            // collection. Snapshot both trees before recursion so a descendant
+            // translation cannot invalidate the parent's live enumerator.
+            var children = new List<DependencyObject>();
             if (root is Visual || root is System.Windows.Media.Media3D.Visual3D)
             {
                 int count = VisualTreeHelper.GetChildrenCount(root);
-                for (int i = 0; i < count; i++) ApplyCore(VisualTreeHelper.GetChild(root, i), visited);
+                for (int i = 0; i < count; i++) children.Add(VisualTreeHelper.GetChild(root, i));
             }
 
             foreach (object child in LogicalTreeHelper.GetChildren(root))
             {
-                if (child is DependencyObject dependencyObject) ApplyCore(dependencyObject, visited);
+                if (child is DependencyObject dependencyObject) children.Add(dependencyObject);
             }
+
+            foreach (DependencyObject child in children) ApplyCore(child, visited);
         }
 
         private static void TranslateObject(DependencyObject item)
@@ -381,7 +446,12 @@ namespace AxialSqlTools
                 originals.Values[property] = original;
             }
             string localized = IsChinese ? T(original) : original;
-            setter(localized);
+            // Assigning even an identical value replaces a WPF Binding with a local
+            // value. Avoid doing that for untranslated or already-localized text.
+            if (!string.Equals(current, localized, StringComparison.Ordinal))
+            {
+                setter(localized);
+            }
             originals.LastApplied[property] = localized;
         }
     }

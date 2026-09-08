@@ -291,7 +291,21 @@ namespace AxialSqlTools
         {
             string resultCode = "";
 
-            TSql170Parser sqlParser = new TSql170Parser(false);
+            int compatibilityLevel = 170;
+            try
+            {
+                // Formatting is also used to render the settings preview.  That preview must
+                // remain available when no SQL editor is active or SSMS cannot expose its
+                // connection service, so connection metadata is only an optional refinement.
+                var currentConnection = ScriptFactoryAccess.GetCurrentConnectionInfo();
+                if (Completion.SqlMetadataCache.TryGetCached(currentConnection, out Completion.MetadataSnapshot metadata))
+                    compatibilityLevel = metadata.CompatibilityLevel;
+            }
+            catch (Exception ex)
+            {
+                AxialSqlToolsPackage._logger?.Debug(ex, "Unable to read the active connection while formatting; using the default compatibility level.");
+            }
+            TSqlParser sqlParser = CreateParser(compatibilityLevel);
 
             IList<ParseError> parseErrors = new List<ParseError>();
             TSqlFragment result = sqlParser.Parse(new StringReader(oldCode), out parseErrors);
@@ -313,9 +327,8 @@ namespace AxialSqlTools
                 formatSettings = settingsOverride;
             }
 
-            Sql170ScriptGenerator gen = new Sql170ScriptGenerator();
+            SqlScriptGenerator gen = CreateGenerator(compatibilityLevel);
             gen.Options.AlignClauseBodies = false;
-            gen.Options.SqlVersion = SqlVersion.Sql170; //TODO - try to get from current connection
 
             if (formatSettings.preserveComments)
             {
@@ -342,7 +355,27 @@ namespace AxialSqlTools
 
         }
 
-        private static string ApplySpecialFormat(string oldCode, TSql170Parser sqlParser, SettingsManager.TSqlCodeFormatSettings formatSettings)
+        private static TSqlParser CreateParser(int level)
+        {
+            if (level >= 170) return new TSql170Parser(false);
+            if (level >= 160) return new TSql160Parser(false);
+            if (level >= 150) return new TSql150Parser(false);
+            if (level >= 140) return new TSql140Parser(false);
+            if (level >= 130) return new TSql130Parser(false);
+            return new TSql120Parser(false);
+        }
+
+        private static SqlScriptGenerator CreateGenerator(int level)
+        {
+            if (level >= 170) return new Sql170ScriptGenerator();
+            if (level >= 160) return new Sql160ScriptGenerator();
+            if (level >= 150) return new Sql150ScriptGenerator();
+            if (level >= 140) return new Sql140ScriptGenerator();
+            if (level >= 130) return new Sql130ScriptGenerator();
+            return new Sql120ScriptGenerator();
+        }
+
+        private static string ApplySpecialFormat(string oldCode, TSqlParser sqlParser, SettingsManager.TSqlCodeFormatSettings formatSettings)
         {
             IList<ParseError> parseErrors = new List<ParseError>();
 

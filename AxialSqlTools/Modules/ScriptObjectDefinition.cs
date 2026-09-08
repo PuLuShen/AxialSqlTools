@@ -55,8 +55,12 @@ namespace AxialSqlTools
     {
 
         public static string GetText(AsyncPackage package, string selectedObjectName)
+            => GetText(package, selectedObjectName, ScriptFactoryAccess.GetCurrentConnectionInfo());
+
+        public static string GetText(AsyncPackage package, string selectedObjectName, ScriptFactoryAccess.ConnectionInfo connectionInfo)
         {
-            var connectionInfo = ScriptFactoryAccess.GetCurrentConnectionInfo();
+            if (connectionInfo == null || string.IsNullOrWhiteSpace(connectionInfo.FullConnectionString))
+                throw new InvalidOperationException("No active SQL Server connection is available.");
 
             ScriptObjectSelectionItem selectedObject = null;
 
@@ -65,12 +69,14 @@ namespace AxialSqlTools
                 currentServerConnection.Open();
 
                 string commandText = $@"
-                        SELECT PARSENAME(@FullName, 3) AS DatabaseName,
+                        SELECT PARSENAME(@FullName, 4) AS ServerName,
+                               PARSENAME(@FullName, 3) AS DatabaseName,
                                PARSENAME(@FullName, 2) AS SchemaName,
                                PARSENAME(@FullName, 1) AS ObjectName;
                         ";
 
                 string currentDatabase = string.Empty;
+                string linkedServer = string.Empty;
 
                 ParsedObjectName parsedObjectName = null;
 
@@ -82,10 +88,11 @@ namespace AxialSqlTools
                     {
                         if (reader.Read())
                         {
-                            currentDatabase = reader.IsDBNull(0) ? currentServerConnection.Database : reader.GetString(0);
+                            linkedServer = reader.IsDBNull(0) ? string.Empty : reader.GetString(0);
+                            currentDatabase = reader.IsDBNull(1) ? currentServerConnection.Database : reader.GetString(1);
                             parsedObjectName = new ParsedObjectName(
-                                reader.IsDBNull(1) ? string.Empty : reader.GetString(1),
-                                reader.IsDBNull(2) ? string.Empty : reader.GetString(2)
+                                reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+                                reader.IsDBNull(3) ? string.Empty : reader.GetString(3)
                             );
                         }
                     }
@@ -94,6 +101,12 @@ namespace AxialSqlTools
                 if (string.IsNullOrEmpty(parsedObjectName.ObjectName))
                 {
                     throw new Exception($"Failed to extract a table name from the provided object string: {selectedObjectName}");
+                }
+
+                if (!string.IsNullOrWhiteSpace(linkedServer))
+                {
+                    return QueryLinkedModuleDefinition(currentServerConnection, linkedServer, currentDatabase,
+                        parsedObjectName.SchemaName, parsedObjectName.ObjectName, selectedObjectName);
                 }
 
                 List<ScriptObjectSelectionItem> matches = QueryObjects(
@@ -124,20 +137,17 @@ namespace AxialSqlTools
                 }
                 else
                 {
-                    var dialog = new ScriptObjectPickerDialog(matches);
-                    var uiShell = Package.GetGlobalService(typeof(SVsUIShell)) as IVsUIShell;
-                    if (uiShell != null && uiShell.GetDialogOwnerHwnd(out var hwnd) == 0 && hwnd != IntPtr.Zero)
+                    ScriptObjectSelectionItem picked = null;
+                    ThreadHelper.JoinableTaskFactory.Run(async delegate
                     {
-                        new WindowInteropHelper(dialog).Owner = hwnd;
-                    }
-
-                    bool? result = dialog.ShowDialog();
-                    if (result != true)
-                    {
-                        return string.Empty;
-                    }
-
-                    selectedObject = dialog.SelectedObject;
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        var dialog = new ScriptObjectPickerDialog(matches);
+                        var uiShell = Package.GetGlobalService(typeof(SVsUIShell)) as IVsUIShell;
+                        if (uiShell != null && uiShell.GetDialogOwnerHwnd(out var hwnd) == 0 && hwnd != IntPtr.Zero)
+                            new WindowInteropHelper(dialog).Owner = hwnd;
+                        if (dialog.ShowDialog() == true) picked = dialog.SelectedObject;
+                    });
+                    selectedObject = picked;
                     if (selectedObject == null)
                     {
                         return string.Empty;
@@ -267,6 +277,40 @@ namespace AxialSqlTools
             return fullScriptResult;
         }
 
+        private static string QueryLinkedModuleDefinition(SqlConnection connection, string serverName, string databaseName,
+            string schemaName, string objectName, string selectedObjectName)
+        {
+            string prefix = DatabaseIdentifier.SqlServerPart(serverName) + "." + DatabaseIdentifier.SqlServerPart(databaseName);
+            string sql = $@"
+SELECT sm.definition
+FROM {prefix}.sys.sql_modules AS sm
+JOIN {prefix}.sys.objects AS o ON o.object_id = sm.object_id
+JOIN {prefix}.sys.schemas AS s ON s.schema_id = o.schema_id
+WHERE o.name = @objectName
+  AND (@schemaName IS NULL OR s.name = @schemaName);";
+
+            var definitions = new List<string>();
+            using (var command = new SqlCommand(sql, connection))
+            {
+                command.CommandTimeout = 15;
+                command.Parameters.Add(new SqlParameter("objectName", objectName));
+                command.Parameters.Add(new SqlParameter("schemaName", string.IsNullOrWhiteSpace(schemaName) ? (object)DBNull.Value : schemaName));
+                using (SqlDataReader reader = command.ExecuteReader())
+                {
+                    while (reader.Read()) definitions.Add(reader.IsDBNull(0) ? null : reader.GetString(0));
+                }
+            }
+
+            if (definitions.Count > 1)
+                throw new InvalidOperationException($"The linked-server object name is ambiguous: '{selectedObjectName}'. Include its schema.");
+            if (definitions.Count == 1 && definitions[0] == null)
+                throw new InvalidOperationException($"The linked-server module is encrypted and its definition cannot be read: '{selectedObjectName}'.");
+            if (definitions.Count == 1)
+                return definitions[0].TrimEnd() + Environment.NewLine + "GO" + Environment.NewLine;
+
+            throw new NotSupportedException($"F12 can open stored procedures, views, functions, and triggers through a linked server, but '{selectedObjectName}' is not a readable SQL module. Table scripting requires a direct connection to that server.");
+        }
+
 
 
         private static List<ScriptObjectSelectionItem> QueryObjects(
@@ -275,7 +319,8 @@ namespace AxialSqlTools
             string objectName,
             string schemaName)
         {
-            string commandText = $@"USE [{databaseName}];
+            string quotedDatabase = DatabaseIdentifier.SqlServerPart(databaseName);
+            string commandText = $@"USE {quotedDatabase};
             SELECT o.type_desc,
                    s.name,
                    o.name,

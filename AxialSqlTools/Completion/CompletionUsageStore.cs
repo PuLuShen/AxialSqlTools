@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace AxialSqlTools.Completion
 {
@@ -11,6 +12,7 @@ namespace AxialSqlTools.Completion
         private static readonly object Gate = new object();
         private static readonly string FilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AxialSQL", "completion-usage.json");
         private static Dictionary<string, int> counts = Load();
+        private static int saveGeneration;
 
         public static int GetScore(CompletionItem item)
         {
@@ -28,7 +30,8 @@ namespace AxialSqlTools.Completion
                 counts[key] = counts.TryGetValue(key, out int count) ? count + 1 : 1;
                 snapshot = new Dictionary<string, int>(counts, StringComparer.OrdinalIgnoreCase);
             }
-            Task.Run(() => Save(snapshot));
+            int generation = Interlocked.Increment(ref saveGeneration);
+            Task.Run(() => Save(snapshot, generation));
         }
 
         private static string Key(CompletionItem item) => (item.ScopeKey ?? string.Empty) + "|" + item.Kind + "|" + item.DisplayText;
@@ -39,18 +42,25 @@ namespace AxialSqlTools.Completion
                 if (File.Exists(FilePath)) return JsonConvert.DeserializeObject<Dictionary<string, int>>(File.ReadAllText(FilePath))
                     ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             }
-            catch { }
+            catch (Exception ex) { FeatureDiagnostics.Report("SQL Completion Usage", "Could not load local completion ranking", ex); }
             return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         }
 
-        private static void Save(Dictionary<string, int> value)
+        private static void Save(Dictionary<string, int> value, int generation)
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
-                File.WriteAllText(FilePath, JsonConvert.SerializeObject(value));
+                lock (Gate)
+                {
+                    if (generation != Volatile.Read(ref saveGeneration)) return;
+                    Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
+                    string temporary = FilePath + ".tmp";
+                    File.WriteAllText(temporary, JsonConvert.SerializeObject(value));
+                    if (File.Exists(FilePath)) File.Replace(temporary, FilePath, null);
+                    else File.Move(temporary, FilePath);
+                }
             }
-            catch { }
+            catch (Exception ex) { FeatureDiagnostics.Report("SQL Completion Usage", "Could not save local completion ranking", ex); }
         }
     }
 }

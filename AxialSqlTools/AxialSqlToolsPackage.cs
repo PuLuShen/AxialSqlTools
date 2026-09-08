@@ -65,6 +65,7 @@ namespace AxialSqlTools
     [ProvideToolWindow(typeof(DataImportWindow))]
     [ProvideToolWindow(typeof(QuickSearchWindow))]
     [ProvideToolWindow(typeof(SnippetManagerWindow))]
+    [ProvideToolWindow(typeof(QueryTemplateWindow))]
     public sealed class AxialSqlToolsPackage : AsyncPackage
     {
 
@@ -98,6 +99,8 @@ namespace AxialSqlTools
             public string DatabaseName;
             public string LoginName;
             public string WorkstationId;
+            public int RetryCount;
+            public Guid ClientExecutionId = Guid.NewGuid();
         }
 
         private const string QueryHistoryStorageModeTextFiles = "TextFiles";
@@ -105,14 +108,23 @@ namespace AxialSqlTools
 
         private static ConcurrentQueue<QueryHistoryEntry> _queryHistoryQueue = new ConcurrentQueue<QueryHistoryEntry>();
         private static int _queryHistoryProcessorRunning;
+        private static int _queryHistoryQueueCount;
+        private static Task _queryHistoryProcessorTask = Task.CompletedTask;
+        private static QueryHistoryEntry _queryHistoryInFlight;
+        private const int QueryHistoryQueueLimit = 5000;
+        private static readonly object QueryHistoryRecoveryFileLock = new object();
+        private static readonly object QueryHistoryTextFileLock = new object();
+        private static readonly ConcurrentDictionary<string, byte> QueryHistoryInitializedStores = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         public static string QueryHistoryLastPersistenceError { get; private set; }
         public static DateTime? QueryHistoryLastPersistenceSuccess { get; private set; }
+        private static DateTime _queryHistoryLastDatabaseCleanupUtc;
         private static int _statisticsCaptureVersion;
         private static int _pendingStatisticsCaptureVersion;
         private static readonly object _statisticsCaptureSyncRoot = new object();
         private static CancellationTokenSource _statisticsCaptureCancellationTokenSource;
         private System.Windows.Threading.DispatcherTimer _connectionColorRetryTimer;
         private System.Windows.Threading.DispatcherTimer _activeConnectionMonitorTimer;
+        private EnvDTE.WindowEvents _windowEvents;
         private int _connectionColorRetryCount;
         private string _lastObservedConnectionColorKey;
         private string _lastObservedConnectionWindowKey;
@@ -160,6 +172,13 @@ namespace AxialSqlTools
 
         private static void EnqueueDataForProcessing(QueryHistoryEntry data)
         {
+            if (Interlocked.Increment(ref _queryHistoryQueueCount) > QueryHistoryQueueLimit)
+            {
+                Interlocked.Decrement(ref _queryHistoryQueueCount);
+                QueryHistoryLastPersistenceError = "Query history queue is full; the newest entry was written to the recovery log.";
+                PersistRecoveryCopy(data, "queue-full");
+                return;
+            }
             _queryHistoryQueue.Enqueue(data);
             StartQueryHistoryProcessor();
         }
@@ -168,7 +187,7 @@ namespace AxialSqlTools
         {
             if (Interlocked.CompareExchange(ref _queryHistoryProcessorRunning, 1, 0) == 0)
             {
-                _ = Task.Run(() => ProcessDataAsync());
+                _queryHistoryProcessorTask = Task.Run(() => ProcessDataAsync());
             }
         }
 
@@ -178,7 +197,17 @@ namespace AxialSqlTools
             {
                 while (_queryHistoryQueue.TryDequeue(out QueryHistoryEntry data))
                 {
-                    await PersistDataAsync(data);
+                    Interlocked.Decrement(ref _queryHistoryQueueCount);
+                    Interlocked.Exchange(ref _queryHistoryInFlight, data);
+                    bool persisted = false;
+                    for (int attempt = 0; attempt < 3 && !persisted; attempt++)
+                    {
+                        data.RetryCount = attempt;
+                        persisted = await PersistDataAsync(data);
+                        if (!persisted && attempt < 2) await Task.Delay(250 * (1 << attempt));
+                    }
+                    if (!persisted) PersistRecoveryCopy(data, "persistence-failed");
+                    Interlocked.CompareExchange(ref _queryHistoryInFlight, null, data);
                 }
             }
             finally
@@ -191,38 +220,42 @@ namespace AxialSqlTools
             }
         }
 
-        private static async Task PersistDataAsync(QueryHistoryEntry data)
+        private static async System.Threading.Tasks.Task<bool> PersistDataAsync(QueryHistoryEntry data)
         {
+            string initializationKey = null;
             try
             {
+                data.QueryText = QueryHistoryPrivacy.Protect(data.QueryText);
                 string storageMode = SettingsManager.GetQueryHistoryStorageMode();
                 if (string.Equals(storageMode, QueryHistoryStorageModeDisabled, StringComparison.OrdinalIgnoreCase))
                 {
-                    return;
+                    return true;
                 }
 
                 if (string.Equals(storageMode, QueryHistoryStorageModeTextFiles, StringComparison.OrdinalIgnoreCase))
                 {
+                    QueryHistoryPrivacy.CleanupTextFiles();
                     await PersistDataAsJsonLineAsync(data);
                     QueryHistoryLastPersistenceError = null;
                     QueryHistoryLastPersistenceSuccess = DateTime.Now;
-                    return;
+                    return true;
                 }
 
                 string connectionString = SettingsManager.GetQueryHistoryConnectionString();
-                string qhTableName = SettingsManager.GetQueryHistoryTableNameOrDefault();
-                string indexNameGuid = Guid.NewGuid().ToString(); // too much complexity trying to incorporate all possible table name combinations into proper index name
+                string qhTableName = DatabaseIdentifier.SqlServerLocalObject(SettingsManager.GetQueryHistoryTableNameOrDefault());
+                initializationKey = connectionString + "|" + qhTableName;
 
                     if (string.IsNullOrEmpty(connectionString))
                     {
                         QueryHistoryLastPersistenceError = "Database storage is selected but no connection is configured.";
-                        return;
+                        return false;
                 }
 
                 using (SqlConnection connection = new SqlConnection(connectionString))
                 {
                     await connection.OpenAsync();
-                    string sql = $@"
+                    bool initializeStore = !QueryHistoryInitializedStores.ContainsKey(initializationKey);
+                    string setupSql = initializeStore ? $@"
                         IF OBJECT_ID('{qhTableName}') IS NULL
                         BEGIN
                             CREATE TABLE {qhTableName} (
@@ -237,20 +270,28 @@ namespace AxialSqlTools
                                 [DatabaseName]      NVARCHAR (128) NOT NULL,
                                 [LoginName]         NVARCHAR (128) NOT NULL,
                                 [WorkstationId]     NVARCHAR (128) NOT NULL,
-                                PRIMARY KEY CLUSTERED ([QueryID]),
-                                INDEX [IDX_{indexNameGuid}_1] ([StartTime]),
-                                INDEX [IDX_{indexNameGuid}_2] ([FinishTime]),
-                                INDEX [IDX_{indexNameGuid}_3] ([DataSource]),
-                                INDEX [IDX_{indexNameGuid}_4] ([DatabaseName])
+                                PRIMARY KEY CLUSTERED ([QueryID])
                             );
-                            ALTER INDEX ALL ON {qhTableName} REBUILD WITH (DATA_COMPRESSION = PAGE);
                         END
 
+                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('{qhTableName}') AND name='IX_AxialQueryHistory_StartTime')
+                            CREATE INDEX [IX_AxialQueryHistory_StartTime] ON {qhTableName}([StartTime]);
+                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('{qhTableName}') AND name='IX_AxialQueryHistory_DataSource_Database')
+                            CREATE INDEX [IX_AxialQueryHistory_DataSource_Database] ON {qhTableName}([DataSource],[DatabaseName]);
+
+                        IF COL_LENGTH('{qhTableName}', 'ClientExecutionId') IS NULL
+                            ALTER TABLE {qhTableName} ADD [ClientExecutionId] UNIQUEIDENTIFIER NULL;
+
+                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('{qhTableName}') AND name='UX_AxialQueryHistory_ClientExecutionId')
+                            CREATE UNIQUE INDEX [UX_AxialQueryHistory_ClientExecutionId] ON {qhTableName}([ClientExecutionId]) WHERE [ClientExecutionId] IS NOT NULL;
+                        " : string.Empty;
+                    string sql = setupSql + $@"
+                        IF NOT EXISTS (SELECT 1 FROM {qhTableName} WHERE [ClientExecutionId]=@ClientExecutionId)
                         INSERT INTO {qhTableName}
                             (StartTime, FinishTime, ElapsedTime, TotalRowsReturned, 
-                                ExecResult, QueryText, DataSource, DatabaseName, LoginName, WorkstationId) 
+                                ExecResult, QueryText, DataSource, DatabaseName, LoginName, WorkstationId, ClientExecutionId)
                         VALUES (@StartTime, @FinishTime, @ElapsedTime, @TotalRowsReturned, 
-                                    @ExecResult, @QueryText, @DataSource, @DatabaseName, @LoginName, @WorkstationId)
+                                    @ExecResult, @QueryText, @DataSource, @DatabaseName, @LoginName, @WorkstationId, @ClientExecutionId)
                         ";
 
                     using (SqlCommand command = new SqlCommand(sql, connection))
@@ -265,16 +306,38 @@ namespace AxialSqlTools
                         command.Parameters.AddWithValue("@DatabaseName", data.DatabaseName ?? string.Empty);
                         command.Parameters.AddWithValue("@LoginName", data.LoginName ?? string.Empty);
                         command.Parameters.AddWithValue("@WorkstationId", data.WorkstationId ?? string.Empty);
+                        command.Parameters.Add("@ClientExecutionId", SqlDbType.UniqueIdentifier).Value = data.ClientExecutionId;
                         await command.ExecuteNonQueryAsync();
+                        if (initializeStore) QueryHistoryInitializedStores[initializationKey] = 0;
                         QueryHistoryLastPersistenceError = null;
                         QueryHistoryLastPersistenceSuccess = DateTime.Now;
                     }
+
+                    int retentionDays = SettingsManager.GetQueryHistoryRetentionDays();
+                    if (retentionDays > 0 && DateTime.UtcNow - _queryHistoryLastDatabaseCleanupUtc > TimeSpan.FromHours(12))
+                    {
+                        try
+                        {
+                            using (var cleanup = new SqlCommand($"DELETE FROM {qhTableName} WHERE [StartTime] < DATEADD(day, -@RetentionDays, GETDATE());", connection))
+                            {
+                                cleanup.CommandTimeout = 30;
+                                cleanup.Parameters.Add("@RetentionDays", SqlDbType.Int).Value = retentionDays;
+                                await cleanup.ExecuteNonQueryAsync();
+                                _queryHistoryLastDatabaseCleanupUtc = DateTime.UtcNow;
+                            }
+                        }
+                        catch (Exception cleanupError) { FeatureDiagnostics.Report("QueryHistory", "Retention cleanup failed after history was saved", cleanupError); }
+                    }
                 }
+                return true;
             }
             catch (Exception ex)
             {
+                if (!string.IsNullOrWhiteSpace(initializationKey)) QueryHistoryInitializedStores.TryRemove(initializationKey, out byte _);
                 QueryHistoryLastPersistenceError = ex.Message;
+                FeatureDiagnostics.Report("QueryHistory", "Background persistence failed", ex);
                 _logger.Error(ex, "[QueryHistory-PersistDataAsync]: An exception occurred");
+                return false;
             }
 
         }
@@ -287,9 +350,55 @@ namespace AxialSqlTools
             string fileName = $"query-history-{DateTime.UtcNow:yyyy-MM-dd}.jsonl";
             string filePath = Path.Combine(folderPath, fileName);
             string json = JsonConvert.SerializeObject(data);
+            lock (QueryHistoryTextFileLock)
+            {
+                // An append can reach disk and still report an I/O failure. On a
+                // retry, detect that record by its stable client id before appending.
+                if (data.RetryCount > 0 && File.Exists(filePath))
+                {
+                    string id = data.ClientExecutionId.ToString("D");
+                    if (File.ReadLines(filePath).Any(line => line.IndexOf(id, StringComparison.OrdinalIgnoreCase) >= 0))
+                        return Task.CompletedTask;
+                }
 
-            File.AppendAllText(filePath, json + Environment.NewLine);
+                File.AppendAllText(filePath, json + Environment.NewLine);
+            }
             return Task.CompletedTask;
+        }
+
+        private static void PersistRecoveryCopy(QueryHistoryEntry data, string reason)
+        {
+            try
+            {
+                data.QueryText = QueryHistoryPrivacy.Protect(data.QueryText);
+                string folder = Path.Combine(SettingsManager.GetQueryHistoryTextFileFolder(), "recovery");
+                Directory.CreateDirectory(folder);
+                string path = Path.Combine(folder, "query-history-recovery-" + DateTime.UtcNow.ToString("yyyy-MM-dd") + ".jsonl");
+                lock (QueryHistoryRecoveryFileLock)
+                {
+                    string id = data.ClientExecutionId.ToString("D");
+                    if (File.Exists(path) && File.ReadLines(path).Any(line => line.IndexOf(id, StringComparison.OrdinalIgnoreCase) >= 0)) return;
+                    File.AppendAllText(path, JsonConvert.SerializeObject(new { Reason = reason, CapturedUtc = DateTime.UtcNow, Entry = data }) + Environment.NewLine);
+                }
+            }
+            catch (Exception ex) { FeatureDiagnostics.Report("QueryHistory", "Could not write recovery history", ex); }
+        }
+
+        private static void FlushQueryHistory(TimeSpan timeout)
+        {
+            StartQueryHistoryProcessor();
+            try { _queryHistoryProcessorTask?.Wait(timeout); }
+            catch (Exception ex) { FeatureDiagnostics.Report("QueryHistory", "Shutdown flush did not complete cleanly", ex); }
+            if (_queryHistoryProcessorTask != null && !_queryHistoryProcessorTask.IsCompleted)
+            {
+                QueryHistoryEntry inFlight = Volatile.Read(ref _queryHistoryInFlight);
+                if (inFlight != null) PersistRecoveryCopy(inFlight, "shutdown-in-flight");
+            }
+            while (_queryHistoryQueue.TryDequeue(out QueryHistoryEntry pending))
+            {
+                Interlocked.Decrement(ref _queryHistoryQueueCount);
+                PersistRecoveryCopy(pending, "shutdown-flush");
+            }
         }
         #endregion
 
@@ -356,12 +465,14 @@ namespace AxialSqlTools
                 await SqlServerBuildsWindowCommand.InitializeAsync(this);
                 await QueryHistoryWindowCommand.InitializeAsync(this);
                 ShortcutManager.ApplyQueryHistoryShortcut(SettingsManager.GetQueryHistoryShortcut(), out _);
+                ShortcutManager.ApplyScriptObjectShortcut(SettingsManager.GetScriptObjectShortcut(), out _);
                 await StatisticsSummaryWindowCommand.InitializeAsync(this);
                 await DatabaseScripterToolWindowCommand.InitializeAsync(this);
                 await QuickSearchWindowCommand.InitializeAsync(this);
                 await SnippetManagerWindowCommand.InitializeAsync(this);
                 await SelectCurrentStatementCommand.InitializeAsync(this);
                 await ToggleBlockCommentCommand.InitializeAsync(this);
+                await QueryTemplateWindowCommand.InitializeAsync(this);
 
                 UpdateChecker.ScheduleCheck(this, SettingsManager.GetEnableUpdateChecks());
 
@@ -384,11 +495,11 @@ namespace AxialSqlTools
                 m_queryExecuteEvent.AfterExecute += this.CommandEvents_AfterExecute;
 
                 EnvDTE80.Events2 events = (EnvDTE80.Events2)application.Events;
-                EnvDTE.WindowEvents windowEvents = events.WindowEvents;
+                _windowEvents = events.WindowEvents;
 
-                windowEvents.WindowCreated += new _dispWindowEvents_WindowCreatedEventHandler(WindowCreated_Event);
-                windowEvents.WindowActivated += new _dispWindowEvents_WindowActivatedEventHandler(WindowActivated_Event);
-                windowEvents.WindowClosing += new _dispWindowEvents_WindowClosingEventHandler(WindowClosing_Event);
+                _windowEvents.WindowCreated += new _dispWindowEvents_WindowCreatedEventHandler(WindowCreated_Event);
+                _windowEvents.WindowActivated += new _dispWindowEvents_WindowActivatedEventHandler(WindowActivated_Event);
+                _windowEvents.WindowClosing += new _dispWindowEvents_WindowClosingEventHandler(WindowClosing_Event);
 
                 StartActiveWindowConnectionMonitor();
 
@@ -413,7 +524,8 @@ namespace AxialSqlTools
                 SnippetService.ReloadSnippets();
 
                 //---------------------------------------------------------------------------
-                RefreshTemplatesList();
+                QueryTemplateLibrary.Instance.CatalogChanged += QueryTemplateLibrary_Changed;
+                QueryTemplateLibrary.Instance.Initialize();
 
             }
             catch (Exception ex)
@@ -458,6 +570,26 @@ namespace AxialSqlTools
                     filter.Dispose();
                 _commandFilters.Clear();
                 _registeredTextViews.Clear();
+                _activeConnectionMonitorTimer?.Stop();
+                _connectionColorRetryTimer?.Stop();
+                if (_windowEvents != null)
+                {
+                    _windowEvents.WindowCreated -= WindowCreated_Event;
+                    _windowEvents.WindowActivated -= WindowActivated_Event;
+                    _windowEvents.WindowClosing -= WindowClosing_Event;
+                    _windowEvents = null;
+                }
+                if (m_queryExecuteEvent != null)
+                {
+                    m_queryExecuteEvent.BeforeExecute -= CommandEvents_BeforeExecute;
+                    m_queryExecuteEvent.AfterExecute -= CommandEvents_AfterExecute;
+                    m_queryExecuteEvent = null;
+                }
+                QueryTemplateLibrary.Instance.CatalogChanged -= QueryTemplateLibrary_Changed;
+                QueryTemplateLibrary.Instance.Dispose();
+                AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
+                GridAccess.RestoreNativeAppearance();
+                FlushQueryHistory(TimeSpan.FromSeconds(3));
                 UpdateChecker.LaunchDeferredUpdateOnClose();
             }
 
@@ -485,7 +617,6 @@ namespace AxialSqlTools
             }
 
             GridAccess.ApplyConnectionColor(connectionInfo.ServerName, connectionInfo.Database);
-            GridAccess.ColorAllDocumentTabs();
             return true;
         }
 
@@ -500,7 +631,7 @@ namespace AxialSqlTools
 
             _activeConnectionMonitorTimer = new System.Windows.Threading.DispatcherTimer
             {
-                Interval = TimeSpan.FromMilliseconds(300)
+                Interval = TimeSpan.FromMilliseconds(750)
             };
 
             _activeConnectionMonitorTimer.Tick += (sender, args) =>
@@ -554,7 +685,6 @@ namespace AxialSqlTools
             }
 
             GridAccess.ApplyConnectionColor(connectionInfo.ServerName, connectionInfo.Database);
-            GridAccess.ColorAllDocumentTabs();
 
             _lastObservedConnectionColorKey = connectionKey;
             _lastObservedConnectionWindowKey = windowKey;
@@ -659,14 +789,11 @@ namespace AxialSqlTools
                         IVsTextView textView;
                         if (txtMgr != null && txtMgr.GetActiveView(0, null, out textView) == VSConstants.S_OK)
                         {
-                            // Prevent duplicate filters on the same text view
-                            if (!_registeredTextViews.Contains(textView))
+                            foreach (KeypressCommandFilter existing in _commandFilters)
                             {
-                                _registeredTextViews.Add(textView);
-                                var CommandFilter = new KeypressCommandFilter(this, textView);
-                                CommandFilter.AddToChain();
-                                _commandFilters.Add(CommandFilter);
+                                if (!existing.IsFor(textView)) existing.DismissCompletion();
                             }
+                            EnsureCommandFilter(textView);
                         }
                     }
                 }
@@ -675,14 +802,17 @@ namespace AxialSqlTools
                     _logger.Error(ex, "An exception occurred");
                 }
             }
+            else
+            {
+                foreach (KeypressCommandFilter existing in _commandFilters) existing.DismissCompletion();
+            }
 
-            // Apply connection-based coloring (document tab + status bar)
+            // Apply connection-based status-bar coloring through SSMS's native API.
             try
             {
                 if (GotFocus != null)
                 {
                     TryApplyConnectionColorForWindow(GotFocus);
-                    GridAccess.ScheduleReapplyAllTabColors();
                     ScheduleActiveWindowConnectionColorRefresh();
                 }
             }
@@ -691,6 +821,21 @@ namespace AxialSqlTools
                 _logger.Error(ex, "An exception occurred applying connection color");
             }
 
+        }
+
+        internal KeypressCommandFilter EnsureCommandFilter(IVsTextView textView)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+            if (textView == null) return null;
+
+            foreach (KeypressCommandFilter existing in _commandFilters)
+                if (existing.IsFor(textView)) return existing;
+
+            _registeredTextViews.Add(textView);
+            var commandFilter = new KeypressCommandFilter(this, textView);
+            commandFilter.AddToChain();
+            _commandFilters.Add(commandFilter);
+            return commandFilter;
         }
 
         private void WindowClosing_Event(EnvDTE.Window Window)
@@ -711,7 +856,6 @@ namespace AxialSqlTools
                     }
                     _registeredTextViews.Remove(closingView);
                 }
-                GridAccess.ScheduleReapplyAllTabColors();
             }
             catch (Exception ex)
             {
@@ -730,7 +874,6 @@ namespace AxialSqlTools
                 var sqlResultsControl = GridAccess.GetNonPublicField(Window.Object, "m_sqlResultsControl");
                 AttachStatisticsExecutionCompletedHandler(sqlResultsControl);
                 TryApplyConnectionColorForWindow(Window);
-                GridAccess.ScheduleReapplyAllTabColors();
                 ScheduleActiveWindowConnectionColorRefresh();
 
             }
@@ -829,6 +972,22 @@ namespace AxialSqlTools
         {
 
             ThreadHelper.ThrowIfNotOnUIThread();
+
+            // Metadata refresh is independent from query-history collection. A
+            // failure in optional history fields must not leave completion stale
+            // after a successful schema change.
+            try
+            {
+                var executedTextSpan = GridAccess.GetNonPublicField(QEOLESQLExec, "textSpan");
+                string executedSql = (string)GridAccess.GetProperty(executedTextSpan, "Text");
+                if (SettingsManager.GetSqlCompletionSettings().autoRefreshMetadata
+                    && Completion.SqlMetadataCache.ShouldInvalidateAfterExecution(executedSql))
+                    Completion.SqlMetadataCache.Invalidate(ScriptFactoryAccess.GetCurrentConnectionInfo());
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Unable to refresh SQL completion metadata after schema change");
+            }
 
             try
             {
@@ -962,7 +1121,6 @@ namespace AxialSqlTools
                 QueryHistoryObj.WorkstationId = (string)GridAccess.GetProperty(mConn, "WorkstationId");
 
                 EnqueueDataForProcessing(QueryHistoryObj);
-
             }
             catch (Exception ex)
             {
@@ -1245,19 +1403,32 @@ namespace AxialSqlTools
             }
 
             //Delete existing autogenerated controls
-            for (int idx = m_commandBarQueryTemplates.Controls.Count; idx >= 3; idx--)
+            for (int idx = m_commandBarQueryTemplates.Controls.Count; idx >= 1; idx--)
             {
                 CommandBarControl control = m_commandBarQueryTemplates.Controls[idx];
                 if (control == null) continue;
-
-                control.Delete();
+                string tag = control.Tag ?? string.Empty;
+                string caption = control.Caption ?? string.Empty;
+                if (tag.StartsWith("Template_", StringComparison.Ordinal)
+                    || tag.StartsWith("Folder_", StringComparison.Ordinal)
+                    || caption.StartsWith("Template_", StringComparison.Ordinal)
+                    || caption.StartsWith("Folder_", StringComparison.Ordinal))
+                    control.Delete();
             }
 
             Dictionary<string, string> fileNamesCache = new Dictionary<string, string>();
 
             string Folder = SettingsManager.GetTemplatesFolder();
+            if (!Directory.Exists(Folder)) return;
             int i = 2;
-            CreateCommands(ref i, ref fileNamesCache, Folder, m_commandRegistry, m_commandBarQueryTemplates);
+            try
+            {
+                CreateCommands(ref i, ref fileNamesCache, Folder, m_commandRegistry, m_commandBarQueryTemplates);
+            }
+            catch (Exception ex)
+            {
+                _logger?.Warn(ex, "Query templates could not be enumerated.");
+            }
 
             UpdateRenamedTemplatesControls(m_commandBarQueryTemplates, fileNamesCache);
 
@@ -1284,7 +1455,18 @@ namespace AxialSqlTools
                 CommandRegistry m_commandRegistry, CommandBar commandBarFolder)
         {
 
-            var dirs = Directory.GetDirectories(Folder);
+            var dirs = Directory.GetDirectories(Folder)
+                .Where(path =>
+                {
+                    try
+                    {
+                        FileAttributes attributes = File.GetAttributes(path);
+                        return (attributes & (FileAttributes.Hidden | FileAttributes.ReparsePoint)) == 0;
+                    }
+                    catch { return false; }
+                })
+                .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
+                .ToArray();
 
             foreach (var dirStr in dirs)
             {
@@ -1297,18 +1479,36 @@ namespace AxialSqlTools
 
                 CommandBar commandBarFolderNext = m_plugin.AddCommandBarMenu(controlName, MsoBarPosition.msoBarMenuBar, commandBarFolder);
 
-                CreateCommands(ref i, ref fileNamesCache, Path.Combine(Folder, dirStr), m_commandRegistry, commandBarFolderNext);
+                try
+                {
+                    CreateCommands(ref i, ref fileNamesCache, dirStr, m_commandRegistry, commandBarFolderNext);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.Warn(ex, "Query template folder could not be enumerated: {0}", dirStr);
+                }
 
             }
 
-            var files = Directory.GetFiles(Folder);
+            var files = Directory.GetFiles(Folder, "*.sql", SearchOption.TopDirectoryOnly)
+                .Where(path =>
+                {
+                    try
+                    {
+                        FileAttributes attributes = File.GetAttributes(path);
+                        return (attributes & (FileAttributes.Hidden | FileAttributes.Temporary)) == 0;
+                    }
+                    catch { return false; }
+                })
+                .OrderBy(path => Path.GetFileName(path), StringComparer.CurrentCultureIgnoreCase)
+                .ToArray();
 
             foreach (var file in files)
             {
                 var fi = new FileInfo(file);
 
                 string controlName = "Template_" + i;
-                fileNamesCache.Add(controlName, fi.Name);
+                fileNamesCache.Add(controlName, Path.GetFileNameWithoutExtension(fi.Name));
 
                 var nc = new CommandProcessor(m_plugin, controlName, controlName, "");
                 nc.package = this;
@@ -1321,6 +1521,15 @@ namespace AxialSqlTools
 
             UpdateRenamedTemplatesControls(commandBarFolder, fileNamesCache);
 
+        }
+
+        private void QueryTemplateLibrary_Changed(object sender, EventArgs e)
+        {
+            JoinableTaskFactory.RunAsync(async delegate
+            {
+                await JoinableTaskFactory.SwitchToMainThreadAsync(DisposalToken);
+                RefreshTemplatesList();
+            });
         }
 
     }

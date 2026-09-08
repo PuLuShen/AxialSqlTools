@@ -197,8 +197,9 @@ namespace AxialSqlTools
                         includeAgentJobSteps,
                         cancellationToken);
                 }
-                catch (SqlException)
+                catch (SqlException ex)
                 {
+                    FeatureDiagnostics.Report("Quick Search", "Search failed for database " + dbName, ex);
                     continue;
                 }
 
@@ -207,6 +208,8 @@ namespace AxialSqlTools
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     string sourceText = row["SourceText"]?.ToString() ?? string.Empty;
+                    if (wholeWord && !useWildcards && !Regex.IsMatch(sourceText, @"(?<![\p{L}\p{N}_])" + Regex.Escape(searchText) + @"(?![\p{L}\p{N}_])", RegexOptions.IgnoreCase))
+                        continue;
 
                     string preview = BuildPreview(sourceText, searchText, useWildcards);
                     allResults.Rows.Add(
@@ -519,7 +522,14 @@ WHERE js.[command] LIKE @pattern ESCAPE '!'
 
                 if (matchLocation == "JobStep")
                 {
-                    LocalizedMessageBox.Show($"TODO - WIP", "WIP");
+                    string jobName = objectName ?? "SQL Agent job";
+                    string commandText = rowView["SourceText"]?.ToString() ?? string.Empty;
+                    string jobStepScript = "USE [msdb];" + Environment.NewLine + "GO" + Environment.NewLine
+                        + "-- SQL Agent job step: " + jobName + Environment.NewLine + commandText;
+                    var jobConnection = ScriptFactoryAccess.GetCurrentConnectionInfo();
+                    ServiceCache.ScriptFactory.CreateNewBlankScript(ScriptType.Sql, jobConnection.ActiveConnectionInfo, null);
+                    EnvDTE.TextDocument jobDocument = (EnvDTE.TextDocument)ServiceCache.ExtensibilityModel.Application.ActiveDocument.Object(null);
+                    jobDocument.EndPoint.CreateEditPoint().Insert(jobStepScript);
                     return;
                 }
 
@@ -584,8 +594,9 @@ WHERE js.[command] LIKE @pattern ESCAPE '!'
                 }
 
             }
-            catch
+            catch (Exception ex)
             {
+                FeatureDiagnostics.Report("Quick Search", "Could not preview the selected search result", ex);
                 SqlEditor.Text = string.Empty;
             }
         }

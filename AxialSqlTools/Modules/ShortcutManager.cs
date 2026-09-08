@@ -14,7 +14,21 @@ namespace AxialSqlTools
             => ApplyShortcut(QueryHistoryCommandId, "Query History", shortcut, out error);
 
         public static bool ApplyScriptObjectShortcut(string shortcut, out string error)
-            => ApplyShortcut(ScriptObjectCommandId, "Script Object Definition", shortcut, out error);
+        {
+            // F12 is declared in the VSCT for the SQL Query Editor scope. Trying
+            // to assign Global::F12 through EnvDTE conflicts with SSMS's built-in
+            // binding and returns E_INVALIDARG.
+            if (IsF12Shortcut(shortcut))
+            {
+                error = null;
+                return true;
+            }
+
+            return ApplyShortcut(ScriptObjectCommandId, "Script Object Definition", shortcut, out error);
+        }
+
+        internal static bool IsF12Shortcut(string shortcut)
+            => string.Equals((shortcut ?? string.Empty).Trim(), "F12", StringComparison.OrdinalIgnoreCase);
 
         private static bool ApplyShortcut(int commandId, string commandName, string shortcut, out string error)
         {
@@ -36,9 +50,7 @@ namespace AxialSqlTools
                 }
                 if (target == null) throw new InvalidOperationException("The " + commandName + " command is not registered yet.");
 
-                target.Bindings = string.IsNullOrWhiteSpace(shortcut)
-                    ? new object[0]
-                    : new object[] { "Global::" + shortcut.Trim() };
+                target.Bindings = CreateAutomationBinding(shortcut);
                 return true;
             }
             catch (Exception ex)
@@ -47,5 +59,16 @@ namespace AxialSqlTools
                 return false;
             }
         }
+
+        internal static object CreateAutomationBinding(string shortcut)
+        {
+            // EnvDTE accepts a scalar string for one shortcut. Passing object[] here
+            // is rejected by SSMS with E_INVALIDARG even though the getter exposes a
+            // SAFEARRAY when a command has multiple bindings.
+            return string.IsNullOrWhiteSpace(shortcut)
+                ? (object)new object[0]
+                : "Global::" + shortcut.Trim();
+        }
+
     }
 }

@@ -25,6 +25,7 @@ namespace AxialSqlTools
         private bool _isLoading;
         private string _statusMessage = "Preparing query history...", _statusKind = "Info", _resultSummary = "0 results", _lastRefreshed = "";
         private int _pageNumber = 1, _totalCount;
+        private int _refreshVersion;
         private CancellationTokenSource _cancellation;
 
         public ObservableCollection<QueryHistoryRecord> QueryHistoryRecords { get; } = new ObservableCollection<QueryHistoryRecord>();
@@ -63,15 +64,31 @@ namespace AxialSqlTools
         public void ApplyDatePreset(int days) { FilterFromDate = days <= 1 ? DateTime.Today : DateTime.Today.AddDays(-(days - 1)); FilterToDate = DateTime.Today; StartRefresh(true); }
         public void ApplyConnectionFilter(string server, string database) { FilterServer = server ?? ""; FilterDatabase = database ?? ""; StartRefresh(true); }
         private void ClearFilters() { FilterFromDate = FilterToDate = null; FilterServer = FilterDatabase = FilterQueryText = FilterLogin = ""; FilterResult = "All"; StartRefresh(true); }
-        private async void StartRefresh(bool resetPage) { if (resetPage) PageNumber = 1; _cancellation?.Cancel(); _cancellation = new CancellationTokenSource(); await RefreshAsync(_cancellation.Token); }
-
-        private async Task RefreshAsync(CancellationToken token)
+        private async void StartRefresh(bool resetPage)
         {
-            if (FilterFromDate.HasValue && FilterToDate.HasValue && FilterFromDate.Value.Date > FilterToDate.Value.Date) { SetStatus("The From date cannot be later than the To date.", "Error"); return; }
+            if (resetPage) PageNumber = 1;
+            CancellationTokenSource previous = _cancellation;
+            previous?.Cancel();
+            previous?.Dispose();
+            _cancellation = new CancellationTokenSource();
+            int version = Interlocked.Increment(ref _refreshVersion);
+            await RefreshAsync(_cancellation.Token, version);
+        }
+
+        private async Task RefreshAsync(CancellationToken token, int version)
+        {
+            if (FilterFromDate.HasValue && FilterToDate.HasValue && FilterFromDate.Value.Date > FilterToDate.Value.Date)
+            {
+                IsLoading = false;
+                SetStatus("The From date cannot be later than the To date.", "Error");
+                CommandManager.InvalidateRequerySuggested();
+                return;
+            }
             IsLoading = true; SetStatus("Loading query history...", "Loading"); CommandManager.InvalidateRequerySuggested();
             try
             {
                 LoadResult data = await Task.Run(() => Load(token), token); token.ThrowIfCancellationRequested();
+                if (version != Volatile.Read(ref _refreshVersion)) return;
                 QueryHistoryRecords.Clear(); foreach (var record in data.Records) QueryHistoryRecords.Add(record);
                 _totalCount = data.Total; SelectedRecord = QueryHistoryRecords.FirstOrDefault();
                 ResultSummary = _totalCount == 0 ? "No matching queries" : $"Showing {(PageNumber - 1) * PageSize + 1}-{(PageNumber - 1) * PageSize + data.Records.Count} of {_totalCount:N0}";
@@ -82,8 +99,25 @@ namespace AxialSqlTools
                 else SetStatus("Recording is active · " + data.Storage, "Success");
             }
             catch (OperationCanceledException) { }
-            catch (Exception ex) { QueryHistoryRecords.Clear(); _totalCount = 0; ResultSummary = "Unable to load history"; SetStatus("Query history could not be loaded: " + ex.Message, "Error"); }
-            finally { IsLoading = false; OnPropertyChanged(nameof(CanGoPrevious)); OnPropertyChanged(nameof(CanGoNext)); CommandManager.InvalidateRequerySuggested(); }
+            catch (Exception) when (token.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                if (version == Volatile.Read(ref _refreshVersion))
+                {
+                    QueryHistoryRecords.Clear(); _totalCount = 0; ResultSummary = "Unable to load history";
+                    SetStatus("Query history could not be loaded: " + ex.Message, "Error");
+                }
+            }
+            finally
+            {
+                if (version == Volatile.Read(ref _refreshVersion))
+                {
+                    IsLoading = false;
+                    OnPropertyChanged(nameof(CanGoPrevious));
+                    OnPropertyChanged(nameof(CanGoNext));
+                    CommandManager.InvalidateRequerySuggested();
+                }
+            }
         }
 
         private LoadResult Load(CancellationToken token)
@@ -97,18 +131,26 @@ namespace AxialSqlTools
 
         private LoadResult LoadDatabase(CancellationToken token)
         {
-            string table = SettingsManager.GetQueryHistoryTableNameOrDefault(); var clauses = new List<string>(); var values = new List<SqlParameter>(); AddFilters(clauses, values);
+            string table = DatabaseIdentifier.SqlServerLocalObject(SettingsManager.GetQueryHistoryTableNameOrDefault()); var clauses = new List<string>(); var values = new List<SqlParameter>(); AddFilters(clauses, values);
             string where = clauses.Count == 0 ? "" : " WHERE " + string.Join(" AND ", clauses);
             var result = new LoadResult { Storage = "database storage" };
             using (var connection = new SqlConnection(SettingsManager.GetQueryHistoryConnectionString()))
             {
+                token.ThrowIfCancellationRequested();
                 connection.Open();
-                using (var count = new SqlCommand($"SELECT COUNT_BIG(1) FROM {table}{where};", connection) { CommandTimeout = 15 }) { AddClones(count, values); result.Total = Convert.ToInt32(Math.Min(int.MaxValue, Convert.ToInt64(count.ExecuteScalar()))); }
+                token.ThrowIfCancellationRequested();
+                using (var count = new SqlCommand($"SELECT COUNT_BIG(1) FROM {table}{where};", connection) { CommandTimeout = 15 })
+                {
+                    AddClones(count, values);
+                    using (token.Register(() => { try { count.Cancel(); } catch { } }))
+                        result.Total = Convert.ToInt32(Math.Min(int.MaxValue, Convert.ToInt64(count.ExecuteScalar())));
+                }
                 token.ThrowIfCancellationRequested();
                 string sql = $"SELECT [QueryID],[StartTime],[FinishTime],[ElapsedTime],[TotalRowsReturned],[ExecResult],[QueryText],[DataSource],[DatabaseName],[LoginName],[WorkstationId] FROM {table}{where} ORDER BY [QueryID] DESC OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
                 using (var command = new SqlCommand(sql, connection) { CommandTimeout = 30 })
                 {
                     AddClones(command, values); command.Parameters.Add("@Offset", SqlDbType.Int).Value = (PageNumber - 1) * PageSize; command.Parameters.Add("@PageSize", SqlDbType.Int).Value = PageSize;
+                    using (token.Register(() => { try { command.Cancel(); } catch { } }))
                     using (var reader = command.ExecuteReader()) while (reader.Read()) { token.ThrowIfCancellationRequested(); result.Records.Add(Build(reader.GetInt32(0), reader.GetDateTime(1), reader.GetDateTime(2), reader.GetString(3), reader.GetInt64(4), reader.GetString(5), reader.GetString(6), reader.GetString(7), reader.GetString(8), reader.GetString(9), reader.GetString(10))); }
                 }
             }
@@ -117,15 +159,29 @@ namespace AxialSqlTools
 
         private LoadResult LoadFiles(CancellationToken token)
         {
-            string folder = SettingsManager.GetQueryHistoryTextFileFolder(); var records = new List<QueryHistoryRecord>();
+            string folder = SettingsManager.GetQueryHistoryTextFileFolder();
+            var records = new List<QueryHistoryRecord>();
+            int total = 0;
+            int keep = Math.Max(PageSize, PageNumber * PageSize);
             if (Directory.Exists(folder)) foreach (string file in Directory.GetFiles(folder, "*.jsonl").OrderByDescending(x => x)) foreach (string line in File.ReadLines(file))
             {
                 token.ThrowIfCancellationRequested(); if (string.IsNullOrWhiteSpace(line)) continue;
-                try { var x = JsonConvert.DeserializeObject<FileEntry>(line); if (x != null) records.Add(Build(0, x.StartTime, x.FinishTime, x.ElapsedTime, x.TotalRowsReturned, x.ExecResult, x.QueryText, x.DataSource, x.DatabaseName, x.LoginName, x.WorkstationId)); } catch (JsonException) { }
+                try
+                {
+                    var x = JsonConvert.DeserializeObject<FileEntry>(line);
+                    if (x == null) continue;
+                    QueryHistoryRecord record = Build(0, x.StartTime, x.FinishTime, x.ElapsedTime, x.TotalRowsReturned, x.ExecResult, x.QueryText, x.DataSource, x.DatabaseName, x.LoginName, x.WorkstationId);
+                    if (!FilterMemory(new[] { record }).Any()) continue;
+                    total++;
+                    records.Add(record);
+                    if (records.Count > keep * 2)
+                        records = records.OrderByDescending(item => item.Date).Take(keep).ToList();
+                }
+                catch (JsonException) { }
             }
-            var filtered = FilterMemory(records).OrderByDescending(x => x.Date).ToList();
-            var page = filtered.Skip((PageNumber - 1) * PageSize).Take(PageSize).ToList(); for (int i = 0; i < page.Count; i++) page[i].Id = (PageNumber - 1) * PageSize + i + 1;
-            return new LoadResult { Records = page, Total = filtered.Count, Storage = "local text files" };
+            var page = records.OrderByDescending(x => x.Date).Take(keep).Skip((PageNumber - 1) * PageSize).Take(PageSize).ToList();
+            for (int i = 0; i < page.Count; i++) page[i].Id = (PageNumber - 1) * PageSize + i + 1;
+            return new LoadResult { Records = page, Total = total, Storage = "local text files" };
         }
 
         private void AddFilters(List<string> clauses, List<SqlParameter> values)

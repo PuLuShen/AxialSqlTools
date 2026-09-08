@@ -1,4 +1,4 @@
-/* Generate statements to create server permissions for SQL logins, Windows Logins, and Groups */ 
+/* Generate statements to create server permissions for SQL logins, Windows Logins, and Groups */
 SET NOCOUNT ON; 
  
 SELECT  'USE' + SPACE(1) + QUOTENAME('MASTER') AS '--Database Context'; 

@@ -88,21 +88,30 @@ namespace AxialSqlTools
         private void Execute(object sender, EventArgs e)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-
-            // Get the instance number 0 of this tool window. This window is single instance so this instance
-            // is actually the only one.
-            // The last flag is set to true so that if the tool window does not exists it will be created.
-            ToolWindowPane window = this.package.FindToolWindow(typeof(SettingsWindow), 0, true);
-            if ((null == window) || (null == window.Frame))
+            try
             {
-                throw new NotSupportedException("Cannot create tool window");
+                // Get the instance number 0 of this tool window. This window is single instance so this instance
+                // is actually the only one.
+                // The last flag is set to true so that if the tool window does not exists it will be created.
+                ToolWindowPane window = this.package.FindToolWindow(typeof(SettingsWindow), 0, true);
+                if ((null == window) || (null == window.Frame))
+                {
+                    throw new NotSupportedException("Cannot create tool window");
+                }
+
+                IVsWindowFrame windowFrame = (IVsWindowFrame)window.Frame;
+
+                windowFrame.SetProperty((int)__VSFPROPID.VSFPROPID_FrameMode, VSFRAMEMODE.VSFM_MdiChild);
+
+                Microsoft.VisualStudio.ErrorHandler.ThrowOnFailure(windowFrame.Show());
             }
-
-            IVsWindowFrame windowFrame = (IVsWindowFrame)window.Frame;
-
-            windowFrame.SetProperty((int)__VSFPROPID.VSFPROPID_FrameMode, VSFRAMEMODE.VSFM_MdiChild);
-
-            Microsoft.VisualStudio.ErrorHandler.ThrowOnFailure(windowFrame.Show());
+            catch (Exception ex)
+            {
+                Exception detail = ex;
+                while (detail.InnerException != null) detail = detail.InnerException;
+                AxialSqlToolsPackage._logger?.Error(ex, "Could not open settings window");
+                LocalizedMessageBox.Show("Unable to open settings: " + detail.Message, "Settings");
+            }
         }
     }
 }

@@ -133,16 +133,26 @@ namespace AxialSqlTools
                 }
                 catch (Exception ex)
                 {
+                    FeatureDiagnostics.Report("Script Object", "Could not generate the selected object's definition script", ex);
 
-                    // Show a message box to prove we were here
-                    VsShellUtilities.ShowMessageBox(
-                        this.package,
-                        ex.Message,
-                        "Error getting selected object",
-                        OLEMSGICON.OLEMSGICON_WARNING,
-                        OLEMSGBUTTON.OLEMSGBUTTON_OK,
-                        OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
+                    string detail = ex.Message;
+                    if (string.IsNullOrWhiteSpace(detail) && ex.InnerException != null)
+                    {
+                        detail = ex.InnerException.Message;
+                    }
+                    if (string.IsNullOrWhiteSpace(detail))
+                    {
+                        detail = ex.GetType().FullName;
+                    }
 
+                    // SSMS 22's shell-themed message box can render its text using the
+                    // wrong foreground color. Use the WPF message box used elsewhere in
+                    // the extension so the error details remain visible.
+                    LocalizedMessageBox.Show(
+                        "Scripting failed: " + detail,
+                        "Script Object",
+                        System.Windows.MessageBoxButton.OK,
+                        System.Windows.MessageBoxImage.Warning);
                 }
             }
 

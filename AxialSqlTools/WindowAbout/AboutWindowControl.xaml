@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="AxialSqlTools.AboutWindowControl"
+<UserControl x:Class="AxialSqlTools.AboutWindowControl"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -24,17 +24,23 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="0" Orientation="Vertical" HorizontalAlignment="Center" Margin="0,0,0,18">
-                <Image Source="/AxialSqlTools;component/Resources/logo.png" Width="220" Margin="0,0,0,12" />
+            <StackPanel Grid.Row="0" HorizontalAlignment="Center" Margin="0,0,0,18">
+                <Image Source="/AxialSqlTools;component/Resources/logo.png"
+                       Width="220"
+                       Margin="0,0,0,12" />
                 <TextBlock HorizontalAlignment="Center"
                            Text="Axial SQL Tools"
                            FontFamily="Segoe UI"
                            FontSize="26"
                            FontWeight="SemiBold" />
-                <TextBlock Margin="0,6,0,0"
+                <TextBlock Margin="0,5,0,0"
+                           HorizontalAlignment="Center"
+                           Text="SSMS 22 productivity extension"
+                           FontFamily="Segoe UI"
+                           FontSize="14" />
+                <TextBlock Margin="0,4,0,0"
                            HorizontalAlignment="Center"
                            x:Name="TextBlock_CurrentVersion"
                            FontFamily="Segoe UI"
@@ -48,128 +54,125 @@
                     BorderBrush="{DynamicResource AxialThemeBorderBrush}"
                     CornerRadius="4">
                 <StackPanel>
-                    <TextBlock Text="Open-source SSMS productivity tools for SQL Server professionals"
+                    <TextBlock Text="Current features"
                                FontFamily="Segoe UI"
                                FontSize="18"
                                FontWeight="SemiBold"
-                               TextWrapping="Wrap" />
-                    <TextBlock Margin="0,10,0,0"
-                               FontFamily="Segoe UI"
-                               FontSize="13"
-                               LineHeight="20"
-                               TextWrapping="Wrap">
-                        <Run Text="Axial SQL Tools is a community-oriented extension for SQL Server Management Studio. It brings practical workflow helpers, query utilities, data export options, dashboards, and source-control conveniences into the daily work of database developers and administrators." />
-                    </TextBlock>
-                    <TextBlock Margin="0,8,0,0"
-                               FontFamily="Segoe UI"
-                               FontSize="13"
-                               LineHeight="20"
-                               TextWrapping="Wrap">
-                        <Run Text="The project is developed in the open so users can inspect the code, report issues, propose improvements, review releases, and contribute fixes or documentation. Constructive participation from the SQL Server community is welcome." />
-                    </TextBlock>
+                               Margin="0,0,0,12" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="14" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="12" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Grid.Column="0" Padding="13"
+                                Background="{DynamicResource AxialThemeHeaderBackgroundBrush}"
+                                BorderBrush="{DynamicResource AxialThemeSubtleBorderBrush}"
+                                BorderThickness="1" CornerRadius="3">
+                            <StackPanel>
+                                <TextBlock Text="SQL editing and navigation" FontSize="15" FontWeight="SemiBold" />
+                                <TextBlock Margin="0,7,0,0" Text="Smart completion · F12 Go to Definition · T-SQL formatting · snippets · SELECT * expansion"
+                                           FontSize="13" LineHeight="20" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="0" Grid.Column="2" Padding="13"
+                                Background="{DynamicResource AxialThemeHeaderBackgroundBrush}"
+                                BorderBrush="{DynamicResource AxialThemeSubtleBorderBrush}"
+                                BorderThickness="1" CornerRadius="3">
+                            <StackPanel>
+                                <TextBlock Text="Results and data transfer" FontSize="15" FontWeight="SemiBold" />
+                                <TextBlock Margin="0,7,0,0" Text="Excel · Google Sheets · email · temporary-table export · bulk data transfer"
+                                           FontSize="13" LineHeight="20" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="2" Grid.Column="0" Padding="13"
+                                Background="{DynamicResource AxialThemeHeaderBackgroundBrush}"
+                                BorderBrush="{DynamicResource AxialThemeSubtleBorderBrush}"
+                                BorderThickness="1" CornerRadius="3">
+                            <StackPanel>
+                                <TextBlock Text="Monitoring and diagnostics" FontSize="15" FontWeight="SemiBold" />
+                                <TextBlock Margin="0,7,0,0" Text="Query history · statistics summary · server health · connection colors · execution time"
+                                           FontSize="13" LineHeight="20" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Row="2" Grid.Column="2" Padding="13"
+                                Background="{DynamicResource AxialThemeHeaderBackgroundBrush}"
+                                BorderBrush="{DynamicResource AxialThemeSubtleBorderBrush}"
+                                BorderThickness="1" CornerRadius="3">
+                            <StackPanel>
+                                <TextBlock Text="Workflow tools" FontSize="15" FontWeight="SemiBold" />
+                                <TextBlock Margin="0,7,0,0" Text="Quick Search · object scripting · SQL Server version information · GitHub sync"
+                                           FontSize="13" LineHeight="20" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
                 </StackPanel>
             </Border>
 
             <Grid Grid.Row="2" Margin="0,0,0,14">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="16" />
-                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="3*" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="2*" />
                 </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0"
-                        Padding="16"
+                <Border Grid.Column="0" Padding="16"
                         BorderThickness="1"
                         BorderBrush="{DynamicResource AxialThemeBorderBrush}"
                         CornerRadius="4">
                     <StackPanel>
-                        <TextBlock Text="Project links"
-                                   FontFamily="Segoe UI"
-                                   FontSize="16"
-                                   FontWeight="SemiBold" />
-                        <TextBlock Margin="0,10,0,0" FontFamily="Segoe UI" FontSize="13">
-                            <Hyperlink NavigateUri="https://github.com/Axial-SQL/AxialSqlTools" RequestNavigate="Hyperlink_RequestNavigate">
-                                <Run Text="GitHub repository" />
+                        <TextBlock Text="Current project" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Margin="0,10,0,0" FontSize="13">
+                            <Hyperlink NavigateUri="https://github.com/PuLuShen/AxialSqlTools" RequestNavigate="Hyperlink_RequestNavigate">
+                                <Run Text="Source repository" />
                             </Hyperlink>
                         </TextBlock>
-                        <TextBlock Margin="0,8,0,0" FontFamily="Segoe UI" FontSize="13">
-                            <Hyperlink NavigateUri="https://github.com/Axial-SQL/AxialSqlTools/issues" RequestNavigate="Hyperlink_RequestNavigate">
-                                <Run Text="Report a bug or request a feature" />
+                        <TextBlock Margin="0,8,0,0" FontSize="13">
+                            <Hyperlink NavigateUri="https://github.com/PuLuShen/AxialSqlTools/issues" RequestNavigate="Hyperlink_RequestNavigate">
+                                <Run Text="Issues and feature requests" />
                             </Hyperlink>
                         </TextBlock>
-                        <TextBlock Margin="0,8,0,0" FontFamily="Segoe UI" FontSize="13">
-                            <Hyperlink NavigateUri="https://github.com/Axial-SQL/AxialSqlTools/discussions" RequestNavigate="Hyperlink_RequestNavigate">
-                                <Run Text="Join project discussions" />
+                        <TextBlock Margin="0,8,0,0" FontSize="13">
+                            <Hyperlink NavigateUri="https://github.com/PuLuShen/AxialSqlTools/releases" RequestNavigate="Hyperlink_RequestNavigate">
+                                <Run Text="Releases" />
                             </Hyperlink>
                         </TextBlock>
-                        <TextBlock Margin="0,8,0,0" FontFamily="Segoe UI" FontSize="13">
-                            <Hyperlink NavigateUri="https://github.com/Axial-SQL/AxialSqlTools/wiki" RequestNavigate="Hyperlink_RequestNavigate">
-                                <Run Text="Documentation and wiki" />
-                            </Hyperlink>
-                        </TextBlock>
-                        <TextBlock Margin="0,8,0,0" FontFamily="Segoe UI" FontSize="13">
-                            <Hyperlink NavigateUri="https://github.com/Axial-SQL/AxialSqlTools/releases" RequestNavigate="Hyperlink_RequestNavigate">
-                                <Run Text="Releases and changelog" />
+                        <TextBlock Margin="0,8,0,0" FontSize="13">
+                            <Hyperlink NavigateUri="https://github.com/PuLuShen/AxialSqlTools/blob/main/LICENSE" RequestNavigate="Hyperlink_RequestNavigate">
+                                <Run Text="Apache License 2.0" />
                             </Hyperlink>
                         </TextBlock>
                     </StackPanel>
                 </Border>
 
-                <Border Grid.Column="2"
-                        Padding="16"
+                <Border Grid.Column="2" Padding="16"
                         BorderThickness="1"
                         BorderBrush="{DynamicResource AxialThemeBorderBrush}"
                         CornerRadius="4">
-                    <StackPanel>
-                        <TextBlock Text="License and support"
-                                   FontFamily="Segoe UI"
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Text="Support the project"
+                                   HorizontalAlignment="Center"
                                    FontSize="16"
                                    FontWeight="SemiBold" />
-                        <TextBlock Margin="0,10,0,0"
-                                   FontFamily="Segoe UI"
-                                   FontSize="13"
-                                   LineHeight="20"
-                                   TextWrapping="Wrap">
-                            <Run Text="License: Apache License 2.0. You may use, study, modify, and distribute the project under the terms of the license. The extension is provided as-is, without warranty." />
-                        </TextBlock>
-                        <TextBlock Margin="0,8,0,0" FontFamily="Segoe UI" FontSize="13">
-                            <Hyperlink NavigateUri="https://github.com/Axial-SQL/AxialSqlTools/blob/main/LICENSE" RequestNavigate="Hyperlink_RequestNavigate">
-                                <Run Text="Read the full license on GitHub" />
-                            </Hyperlink>
-                        </TextBlock>
-                        <TextBlock Margin="0,8,0,0"
-                                   FontFamily="Segoe UI"
-                                   FontSize="13"
-                                   LineHeight="20"
-                                   TextWrapping="Wrap">
-                            <Run Text="Support is community-based and best-effort. Please open a GitHub issue with clear reproduction steps, logs, SSMS version, and extension version when reporting problems." />
-                        </TextBlock>
+                        <Image Source="/AxialSqlTools;component/Resources/appreciation.png"
+                               Width="170"
+                               Height="170"
+                               Stretch="Uniform"
+                               Margin="0,10,0,0" />
                     </StackPanel>
                 </Border>
             </Grid>
 
-            <Border Grid.Row="3"
-                    Padding="16"
-                    Margin="0,0,0,14"
-                    BorderThickness="1"
-                    BorderBrush="{DynamicResource AxialThemeBorderBrush}"
-                    CornerRadius="4">
-                <StackPanel>
-                    <TextBlock Text="Contributing"
-                               FontFamily="Segoe UI"
-                               FontSize="16"
-                               FontWeight="SemiBold" />
-                    <TextBlock Margin="0,10,0,0"
-                               FontFamily="Segoe UI"
-                               FontSize="13"
-                               LineHeight="20"
-                               TextWrapping="Wrap">
-                        <Run Text="Contributions can include bug reports, feature ideas, pull requests, documentation updates, testing notes, and query-library improvements. If Axial SQL Tools helps your workflow, consider sharing feedback or helping make the project better for the next user." />
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-
-            <TextBlock Grid.Row="4"
+            <TextBlock Grid.Row="3"
                        Margin="0,2,0,0"
                        HorizontalAlignment="Center"
                        FontFamily="Segoe UI"

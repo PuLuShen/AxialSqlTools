@@ -9,6 +9,7 @@ namespace AxialSqlTools
     using System.Linq;
     using System.Text;
     using System.Threading.Tasks;
+    using System.Threading;
     using System.Windows;
     using System.Windows.Controls;
 
@@ -20,6 +21,7 @@ namespace AxialSqlTools
         private ScriptFactoryAccess.ConnectionInfo targetConnection;
         private string selectedExcelPath;
         private bool isImporting;
+        private CancellationTokenSource importCancellation;
 
         public DataImportWindowControl()
         {
@@ -79,15 +81,18 @@ namespace AxialSqlTools
             bool firstRowHeaders = CheckBox_FirstRowHeaders.IsChecked == true;
             bool createTable = CheckBox_CreateTable.IsChecked == true;
             bool truncateTable = CheckBox_Truncate.IsChecked == true;
+            bool checkConstraints = CheckBox_CheckConstraints.IsChecked == true;
             string destinationTable = TextBox_TargetTable.Text.Trim();
             var connectionInfo = targetConnection;
 
             SetBusyState(true);
+            importCancellation = new CancellationTokenSource();
 
             try
             {
-                await PerformImportAsync(worksheet, firstRowHeaders, createTable, truncateTable, destinationTable, connectionInfo);
+                await PerformImportAsync(worksheet, firstRowHeaders, createTable, truncateTable, checkConstraints, destinationTable, connectionInfo, importCancellation.Token);
             }
+            catch (OperationCanceledException) { UpdateStatus("Import cancelled; destination changes were rolled back."); }
             catch (Exception ex)
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -98,6 +103,8 @@ namespace AxialSqlTools
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 SetBusyState(false);
+                importCancellation?.Dispose();
+                importCancellation = null;
             }
         }
 
@@ -135,9 +142,16 @@ namespace AxialSqlTools
             CheckBox_CreateTable.IsChecked = true;
             CheckBox_Truncate.IsChecked = false;
             CheckBox_FirstRowHeaders.IsChecked = true;
+            CheckBox_CheckConstraints.IsChecked = true;
 
             UpdateStatus("Choose an Excel file to get started.");
             UpdateImportButtonState();
+        }
+
+        private void ButtonCancel_OnClick(object sender, RoutedEventArgs e)
+        {
+            importCancellation?.Cancel();
+            UpdateStatus("Cancelling import...");
         }
 
         private void TextBox_TargetTable_OnTextChanged(object sender, TextChangedEventArgs e)
@@ -171,47 +185,53 @@ namespace AxialSqlTools
             CheckBox_CreateTable.IsEnabled = !importing;
             CheckBox_Truncate.IsEnabled = !importing;
             CheckBox_FirstRowHeaders.IsEnabled = !importing;
+            CheckBox_CheckConstraints.IsEnabled = !importing;
+            Button_Cancel.Visibility = importing ? Visibility.Visible : Visibility.Collapsed;
 
             UpdateImportButtonState();
         }
 
-        private async Task PerformImportAsync(string worksheet, bool firstRowHeaders, bool createTable, bool truncateTable, string destinationTable, ScriptFactoryAccess.ConnectionInfo connectionInfo)
+        private async Task PerformImportAsync(string worksheet, bool firstRowHeaders, bool createTable, bool truncateTable, bool checkConstraints, string destinationTable, ScriptFactoryAccess.ConnectionInfo connectionInfo, CancellationToken token)
         {
             await UpdateStatusAsync("Reading Excel file...");
 
-            ExcelImport.WorksheetData worksheetData = await Task.Run(() =>
-                ExcelImport.ReadWorksheet(selectedExcelPath, worksheet, firstRowHeaders));
+            ExcelImport.WorksheetAnalysis worksheetData = await Task.Run(() =>
+                ExcelImport.AnalyzeWorksheet(selectedExcelPath, worksheet, firstRowHeaders, token), token);
+            token.ThrowIfCancellationRequested();
 
-            await UpdateStatusAsync($"Loaded '{worksheetData.WorksheetName}' with {worksheetData.Table.Rows.Count:#,0} rows. Preparing destination table...");
+            await UpdateStatusAsync($"Scanned '{worksheetData.WorksheetName}' with {worksheetData.RowCount:#,0} rows. Preparing destination table...");
 
-            await ImportIntoSqlAsync(worksheetData, destinationTable, createTable, truncateTable, connectionInfo);
+            long imported = await ImportIntoSqlAsync(worksheetData, worksheet, firstRowHeaders, destinationTable, createTable, truncateTable, checkConstraints, connectionInfo, token);
 
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            UpdateStatus($"Imported {worksheetData.Table.Rows.Count:#,0} rows into {destinationTable} on {connectionInfo.DisplayName}.");
+            UpdateStatus($"Imported {imported:#,0} rows into {destinationTable} on {connectionInfo.DisplayName}.");
             LocalizedMessageBox.Show(
-                $"Successfully imported {worksheetData.Table.Rows.Count:#,0} rows from {Path.GetFileName(selectedExcelPath)} into {connectionInfo.DisplayName} ({destinationTable}).",
+                $"Successfully imported {imported:#,0} rows from {Path.GetFileName(selectedExcelPath)} into {connectionInfo.DisplayName} ({destinationTable}).",
                 "Data Import",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
 
-        private async Task ImportIntoSqlAsync(ExcelImport.WorksheetData worksheetData, string destinationTable, bool createTable, bool truncateTable, ScriptFactoryAccess.ConnectionInfo connectionInfo)
+        private async Task<long> ImportIntoSqlAsync(ExcelImport.WorksheetAnalysis worksheetData, string worksheet, bool firstRowHeaders,
+            string destinationTable, bool createTable, bool truncateTable, bool checkConstraints, ScriptFactoryAccess.ConnectionInfo connectionInfo, CancellationToken token)
         {
             string quotedTableName = SqlIdentifierHelper.QuoteQualifiedName(destinationTable);
             string tableLiteral = EscapeForSqlLiteral(quotedTableName);
 
             using (SqlConnection connection = new SqlConnection(connectionInfo.FullConnectionString))
             {
-                await connection.OpenAsync();
+                await connection.OpenAsync(token).ConfigureAwait(false);
+                using (SqlTransaction transaction = connection.BeginTransaction(System.Data.IsolationLevel.ReadCommitted))
+                {
 
-                await UpdateStatusAsync("Ensuring destination table exists...");
+                await UpdateStatusAsync("Ensuring destination table exists...").ConfigureAwait(false);
 
                 if (createTable)
                 {
                     string createScript = BuildCreateTableScript(tableLiteral, quotedTableName, worksheetData.Columns);
-                    using (SqlCommand command = new SqlCommand(createScript, connection))
+                    using (SqlCommand command = new SqlCommand(createScript, connection, transaction))
                     {
-                        await command.ExecuteNonQueryAsync();
+                        await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
                     }
                 }
                 else
@@ -219,35 +239,50 @@ namespace AxialSqlTools
                     string existsScript =
                         $"IF OBJECT_ID(N'{tableLiteral}', 'U') IS NULL BEGIN THROW 50000, 'Destination table was not found.', 1; END";
 
-                    using (SqlCommand command = new SqlCommand(existsScript, connection))
+                    using (SqlCommand command = new SqlCommand(existsScript, connection, transaction))
                     {
-                        await command.ExecuteNonQueryAsync();
+                        await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
                     }
                 }
 
                 if (truncateTable)
                 {
-                    await UpdateStatusAsync("Truncating destination table...");
-                    using (SqlCommand command = new SqlCommand($"TRUNCATE TABLE {quotedTableName};", connection))
+                    await UpdateStatusAsync("Truncating destination table...").ConfigureAwait(false);
+                    using (SqlCommand command = new SqlCommand($"TRUNCATE TABLE {quotedTableName};", connection, transaction))
                     {
-                        await command.ExecuteNonQueryAsync();
+                        await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
                     }
                 }
 
-                await UpdateStatusAsync("Copying rows into SQL Server...");
+                await UpdateStatusAsync("Streaming rows into SQL Server...").ConfigureAwait(false);
 
-                using (SqlBulkCopy bulkCopy = new SqlBulkCopy(connection, SqlBulkCopyOptions.TableLock, null))
+                long imported = 0;
+                SqlBulkCopyOptions bulkOptions = SqlBulkCopyOptions.TableLock;
+                if (checkConstraints) bulkOptions |= SqlBulkCopyOptions.CheckConstraints;
+                using (SqlBulkCopy bulkCopy = new SqlBulkCopy(connection, bulkOptions, transaction))
                 {
                     bulkCopy.DestinationTableName = quotedTableName;
                     bulkCopy.BatchSize = 5000;
-                    bulkCopy.BulkCopyTimeout = 0;
+                    bulkCopy.BulkCopyTimeout = 120;
 
                     foreach (ExcelImport.ExcelColumnMetadata column in worksheetData.Columns)
                     {
                         bulkCopy.ColumnMappings.Add(column.Name, column.Name);
                     }
 
-                    await bulkCopy.WriteToServerAsync(worksheetData.Table);
+                    foreach (System.Data.DataTable batch in ExcelImport.ReadBatches(selectedExcelPath, worksheet, firstRowHeaders, worksheetData, 5000, token))
+                    {
+                        token.ThrowIfCancellationRequested();
+                        await bulkCopy.WriteToServerAsync(batch, token).ConfigureAwait(false);
+                        imported += batch.Rows.Count;
+                        await UpdateStatusAsync($"Imported {imported:#,0} of {worksheetData.RowCount:#,0} rows...").ConfigureAwait(false);
+                    }
+                }
+                if (imported != worksheetData.RowCount)
+                    throw new InvalidOperationException($"Import verification failed: Excel contained {worksheetData.RowCount:#,0} data rows but SQL Server accepted {imported:#,0} rows.");
+
+                transaction.Commit();
+                return imported;
                 }
             }
         }
@@ -283,9 +318,9 @@ namespace AxialSqlTools
             public static string QuoteQualifiedName(string input)
             {
                 var parts = GetNameParts(input);
-                if (parts.Count == 0)
+                if (parts.Count == 0 || parts.Count > 2)
                 {
-                    throw new InvalidOperationException("Destination table name is invalid.");
+                    throw new InvalidOperationException("Destination table must be table or schema.table in the selected SQL Server database.");
                 }
 
                 return string.Join(".", parts.Select(QuoteIdentifier));

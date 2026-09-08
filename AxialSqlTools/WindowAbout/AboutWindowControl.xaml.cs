@@ -2,7 +2,6 @@
 {
     using System;
     using System.Diagnostics;
-    using System.Diagnostics.CodeAnalysis;
     using System.IO;
     using System.Reflection;
     using System.Windows;
@@ -29,7 +28,7 @@
             Version currentVersion = Assembly.GetExecutingAssembly().GetName().Version;
             string currentVersionString = currentVersion.ToString();
 
-            TextBlock_CurrentVersion.Text = $"SSMS extension version {currentVersionString}";
+            TextBlock_CurrentVersion.Text = LocalizationManager.Format("SSMS extension version {0}", currentVersionString);
 
             _logFolder = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

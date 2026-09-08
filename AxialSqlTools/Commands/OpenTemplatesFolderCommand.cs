@@ -90,15 +90,17 @@ namespace AxialSqlTools
         private void Execute(object sender, EventArgs e)
         {
 
-            this.package.RefreshTemplatesList();
-
             try
             {
-                Process.Start("explorer.exe", SettingsManager.GetTemplatesFolder());
+                string folder = SettingsManager.GetTemplatesFolder();
+                if (!System.IO.Directory.Exists(folder))
+                    throw new System.IO.DirectoryNotFoundException("Templates folder is currently unavailable: " + folder);
+                Process.Start(new ProcessStartInfo("explorer.exe", "\"" + folder.Replace("\"", string.Empty) + "\"") { UseShellExecute = true });
             }
-            catch
+            catch (Exception ex)
             {
-                // _logger.Error(ex, "[QueryHistory-PersistDataAsync]: An exception occurred");
+                VsShellUtilities.ShowMessageBox(this.package, ex.Message, "Query Templates",
+                    OLEMSGICON.OLEMSGICON_WARNING, OLEMSGBUTTON.OLEMSGBUTTON_OK, OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
             }
             
 

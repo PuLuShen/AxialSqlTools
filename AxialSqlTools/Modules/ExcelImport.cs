@@ -1,11 +1,13 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
+using DocumentFormat.OpenXml;
 using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
 
 namespace AxialSqlTools
 {
@@ -18,6 +20,13 @@ namespace AxialSqlTools
             public List<ExcelColumnMetadata> Columns { get; set; }
 
             public string WorksheetName { get; set; }
+        }
+
+        internal sealed class WorksheetAnalysis
+        {
+            public List<ExcelColumnMetadata> Columns { get; set; }
+            public string WorksheetName { get; set; }
+            public long RowCount { get; set; }
         }
 
         internal sealed class ExcelColumnMetadata
@@ -51,6 +60,9 @@ namespace AxialSqlTools
         };
 
         public static WorksheetData ReadWorksheet(string filePath, string worksheetName, bool firstRowHasHeaders)
+            => ReadWorksheet(filePath, worksheetName, firstRowHasHeaders, CancellationToken.None);
+
+        public static WorksheetData ReadWorksheet(string filePath, string worksheetName, bool firstRowHasHeaders, CancellationToken token)
         {
             if (string.IsNullOrWhiteSpace(filePath))
             {
@@ -93,6 +105,7 @@ namespace AxialSqlTools
 
                 foreach (Row row in sheetData.Elements<Row>())
                 {
+                    token.ThrowIfCancellationRequested();
                     Dictionary<int, string> rowData = new Dictionary<int, string>();
                     foreach (Cell cell in row.Elements<Cell>())
                     {
@@ -147,6 +160,146 @@ namespace AxialSqlTools
                     Table = dataTable
                 };
             }
+        }
+
+        public static WorksheetAnalysis AnalyzeWorksheet(string filePath, string worksheetName, bool firstRowHasHeaders, CancellationToken token)
+        {
+            ValidateFile(filePath);
+            using (SpreadsheetDocument document = SpreadsheetDocument.Open(filePath, false))
+            {
+                WorkbookPart workbook = document.WorkbookPart ?? throw new InvalidOperationException("The workbook does not contain a workbook part.");
+                Sheet sheet = ResolveWorksheet(workbook, worksheetName) ?? throw new InvalidOperationException("The requested worksheet was not found.");
+                WorksheetPart part = workbook.GetPartById(sheet.Id) as WorksheetPart ?? throw new InvalidOperationException("Unable to open the worksheet part.");
+                Dictionary<int, string> headers = null;
+                var kinds = new List<ColumnKind>();
+                var maxLengths = new List<int>();
+                var maxIntegralDigits = new List<int>();
+                var maxScales = new List<int>();
+                int maxColumn = -1;
+                long rows = 0;
+                foreach (Row row in StreamRows(part))
+                {
+                    token.ThrowIfCancellationRequested();
+                    Dictionary<int, string> values = ReadRow(row, workbook);
+                    if (values.Count == 0 || !values.Values.Any(v => !string.IsNullOrWhiteSpace(v))) continue;
+                    foreach (int index in values.Keys) maxColumn = Math.Max(maxColumn, index);
+                    if (firstRowHasHeaders && headers == null) { headers = values; continue; }
+                    rows++;
+                    foreach (var cell in values)
+                    {
+                        while (kinds.Count <= cell.Key)
+                        {
+                            kinds.Add(ColumnKind.Unknown);
+                            maxLengths.Add(0);
+                            maxIntegralDigits.Add(0);
+                            maxScales.Add(0);
+                        }
+                        ColumnKind incoming = InferKind(cell.Value);
+                        maxLengths[cell.Key] = Math.Max(maxLengths[cell.Key], cell.Value?.Length ?? 0);
+                        if (incoming == ColumnKind.Int32 || incoming == ColumnKind.Int64 || incoming == ColumnKind.Decimal)
+                            UpdateDecimalShape(cell.Value, ref maxIntegralDigits, ref maxScales, cell.Key);
+                        kinds[cell.Key] = kinds[cell.Key] == ColumnKind.Unknown || kinds[cell.Key] == ColumnKind.Empty
+                            ? incoming : PromoteKinds(kinds[cell.Key], incoming);
+                    }
+                }
+                if (maxColumn < 0) throw new InvalidOperationException("The worksheet does not contain any populated cells.");
+                string[] names = BuildColumnNames(headers, maxColumn + 1);
+                var columns = new List<ExcelColumnMetadata>();
+                for (int i = 0; i < names.Length; i++)
+                {
+                    ColumnKind kind = i < kinds.Count && kinds[i] != ColumnKind.Unknown && kinds[i] != ColumnKind.Empty ? kinds[i] : ColumnKind.String;
+                    columns.Add(new ExcelColumnMetadata
+                    {
+                        Name = names[i], Kind = kind, ClrType = GetClrType(kind),
+                        SqlType = GetSqlType(kind, i < maxLengths.Count ? maxLengths[i] : 0,
+                            i < maxIntegralDigits.Count ? maxIntegralDigits[i] : 0,
+                            i < maxScales.Count ? maxScales[i] : 0)
+                    });
+                }
+                return new WorksheetAnalysis { WorksheetName = sheet.Name?.Value ?? "Worksheet", Columns = columns, RowCount = rows };
+            }
+        }
+
+        public static IEnumerable<DataTable> ReadBatches(string filePath, string worksheetName, bool firstRowHasHeaders,
+            WorksheetAnalysis analysis, int batchSize, CancellationToken token)
+        {
+            ValidateFile(filePath);
+            using (SpreadsheetDocument document = SpreadsheetDocument.Open(filePath, false))
+            {
+                WorkbookPart workbook = document.WorkbookPart ?? throw new InvalidOperationException("The workbook does not contain a workbook part.");
+                Sheet sheet = ResolveWorksheet(workbook, worksheetName) ?? throw new InvalidOperationException("The requested worksheet was not found.");
+                WorksheetPart part = workbook.GetPartById(sheet.Id) as WorksheetPart ?? throw new InvalidOperationException("Unable to open the worksheet part.");
+                bool skippedHeader = !firstRowHasHeaders;
+                DataTable batch = CreateDataTable(analysis.WorksheetName, analysis.Columns);
+                foreach (Row row in StreamRows(part))
+                {
+                    token.ThrowIfCancellationRequested();
+                    Dictionary<int, string> values = ReadRow(row, workbook);
+                    if (values.Count == 0 || !values.Values.Any(v => !string.IsNullOrWhiteSpace(v))) continue;
+                    if (!skippedHeader) { skippedHeader = true; continue; }
+                    AddDataRow(batch, analysis.Columns, values);
+                    if (batch.Rows.Count >= Math.Max(1, batchSize))
+                    {
+                        yield return batch;
+                        batch = CreateDataTable(analysis.WorksheetName, analysis.Columns);
+                    }
+                }
+                if (batch.Rows.Count > 0) yield return batch;
+            }
+        }
+
+        private static void ValidateFile(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath)) throw new ArgumentException("Excel file path must be provided.", nameof(filePath));
+            if (!File.Exists(filePath)) throw new FileNotFoundException("Excel file not found.", filePath);
+        }
+
+        private static IEnumerable<Row> StreamRows(WorksheetPart worksheetPart)
+        {
+            using (OpenXmlReader reader = OpenXmlReader.Create(worksheetPart))
+            {
+                while (reader.Read())
+                {
+                    if (reader.ElementType == typeof(Row) && reader.IsStartElement)
+                        yield return (Row)reader.LoadCurrentElement();
+                }
+            }
+        }
+
+        private static Dictionary<int, string> ReadRow(Row row, WorkbookPart workbook)
+        {
+            var result = new Dictionary<int, string>();
+            foreach (Cell cell in row.Elements<Cell>())
+            {
+                if (cell.CellFormula != null && cell.CellValue == null)
+                    throw new InvalidOperationException($"Formula cell {cell.CellReference?.Value} has no cached result. Recalculate and save the workbook in Excel before importing.");
+                int index = GetColumnIndex(cell.CellReference);
+                if (index < 0) continue;
+                string value = TryReadDateFromNumber(cell, workbook, out DateTime date)
+                    ? date.ToString("o", CultureInfo.InvariantCulture)
+                    : GetCellValue(cell, workbook.SharedStringTablePart, workbook);
+                if (value != null) result[index] = value;
+            }
+            return result;
+        }
+
+        private static DataTable CreateDataTable(string name, IList<ExcelColumnMetadata> columns)
+        {
+            var table = new DataTable(name ?? "Worksheet");
+            foreach (ExcelColumnMetadata column in columns) table.Columns.Add(new DataColumn(column.Name, column.ClrType ?? typeof(string)) { AllowDBNull = true });
+            return table;
+        }
+
+        private static void AddDataRow(DataTable table, IList<ExcelColumnMetadata> columns, IDictionary<int, string> values)
+        {
+            DataRow row = table.NewRow();
+            bool populated = false;
+            for (int i = 0; i < columns.Count; i++)
+            {
+                if (!values.TryGetValue(i, out string value) || string.IsNullOrWhiteSpace(value)) row[i] = DBNull.Value;
+                else { row[i] = ConvertValue(value, columns[i].Kind) ?? DBNull.Value; populated = true; }
+            }
+            if (populated) table.Rows.Add(row);
         }
 
         private static Sheet ResolveWorksheet(WorkbookPart workbookPart, string worksheetName)
@@ -555,7 +708,7 @@ namespace AxialSqlTools
                 return null;
             }
 
-            string text = cell.InnerText;
+            string text = cell.CellValue?.Text ?? cell.InlineString?.InnerText ?? cell.InnerText;
 
             if (cell.DataType == null)
                 return text;
@@ -582,7 +735,7 @@ namespace AxialSqlTools
             if (type == CellValues.Date)
             {
                 if (double.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out double oaDate))
-                    return DateTime.FromOADate(oaDate).ToString("o", CultureInfo.InvariantCulture);
+                    return ConvertExcelDate(oaDate, workbookPart).ToString("o", CultureInfo.InvariantCulture);
 
                 return text;
             }
@@ -622,13 +775,46 @@ namespace AxialSqlTools
                 return false;
             }
 
-            if (!double.TryParse(cell.InnerText, NumberStyles.Any, CultureInfo.InvariantCulture, out double oaDate))
+            string raw = cell.CellValue?.Text ?? cell.InnerText;
+            if (!double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out double oaDate))
             {
                 return false;
             }
 
-            dateValue = DateTime.FromOADate(oaDate);
+            dateValue = ConvertExcelDate(oaDate, workbookPart);
             return true;
+        }
+
+        private static string GetSqlType(ColumnKind kind, int maxLength, int integralDigits, int scale)
+        {
+            if (kind == ColumnKind.String)
+                return maxLength > 4000 ? "NVARCHAR(MAX)" : "NVARCHAR(" + Math.Max(1, maxLength) + ")";
+            if (kind == ColumnKind.Decimal)
+            {
+                integralDigits = Math.Max(1, integralDigits);
+                scale = Math.Max(0, Math.Min(scale, 38 - integralDigits));
+                return "DECIMAL(" + Math.Min(38, integralDigits + scale) + ", " + scale + ")";
+            }
+            return GetSqlType(kind);
+        }
+
+        private static void UpdateDecimalShape(string rawValue, ref List<int> integralDigits, ref List<int> scales, int index)
+        {
+            decimal value;
+            if (!decimal.TryParse(rawValue, NumberStyles.Any, CultureInfo.InvariantCulture, out value)
+                && !decimal.TryParse(rawValue, NumberStyles.Any, CultureInfo.CurrentCulture, out value)) return;
+            string normalized = Math.Abs(value).ToString("0.############################", CultureInfo.InvariantCulture);
+            int separator = normalized.IndexOf('.');
+            string integer = separator < 0 ? normalized : normalized.Substring(0, separator);
+            string fraction = separator < 0 ? string.Empty : normalized.Substring(separator + 1).TrimEnd('0');
+            integralDigits[index] = Math.Max(integralDigits[index], Math.Max(1, integer.TrimStart('0').Length));
+            scales[index] = Math.Max(scales[index], fraction.Length);
+        }
+
+        private static DateTime ConvertExcelDate(double serialValue, WorkbookPart workbookPart)
+        {
+            bool uses1904DateSystem = workbookPart?.Workbook?.WorkbookProperties?.Date1904?.Value == true;
+            return DateTime.FromOADate(uses1904DateSystem ? serialValue + 1462d : serialValue);
         }
 
         private static bool IsDateFormat(uint numberFormatId, WorkbookStylesPart stylesPart)

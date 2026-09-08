@@ -88,11 +88,12 @@ namespace AxialSqlTools
         /// <param name="e">Event args.</param>
         private void Execute(object sender, EventArgs e)
         {
-
-            this.package.RefreshTemplatesList();
+            QueryTemplateLibrary.Instance.Refresh();
 
             ThreadHelper.ThrowIfNotOnUIThread();
             string message = string.Format(CultureInfo.CurrentCulture, "The list of templates has been updated!", this.GetType().FullName);
+            if (!string.IsNullOrWhiteSpace(QueryTemplateLibrary.Instance.LastError))
+                message += Environment.NewLine + QueryTemplateLibrary.Instance.LastError;
             string title = "Completed";
 
             // Show a message box to prove we were here

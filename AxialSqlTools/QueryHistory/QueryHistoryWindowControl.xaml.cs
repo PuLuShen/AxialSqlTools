@@ -101,7 +101,7 @@ namespace AxialSqlTools
                 using (var reader = new XmlTextReader(stream))
                     SqlEditor.SyntaxHighlighting = HighlightingLoader.Load(reader, HighlightingManager.Instance);
             }
-            catch { }
+            catch (Exception ex) { FeatureDiagnostics.Report("Query History", "SQL syntax highlighting could not be loaded", ex); }
         }
     }
 }

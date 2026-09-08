@@ -259,3 +259,7 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+
+# Local build instructions and regression test harness
+/BUILD.zh-CN.md
+/AxialSqlTools/RegressionTests/

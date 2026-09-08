@@ -1,1192 +1,198 @@
 namespace AxialSqlTools
 {
-    using Microsoft.VisualStudio.Shell;
-    using MySqlConnector;
-    using Npgsql;
-    using System;
-    using System.Collections.Generic;
-    using System.Data;
     using Microsoft.Data.SqlClient;
+    using Microsoft.VisualStudio.Shell;
+    using System;
+    using System.Data;
+    using System.Data.Common;
+    using System.Collections;
     using System.Diagnostics;
-    using System.Diagnostics.CodeAnalysis;
-    using System.Diagnostics.Tracing;
-    using System.Reflection;
-    using System.Text;
+    using System.Linq;
     using System.Threading;
     using System.Threading.Tasks;
     using System.Windows;
     using System.Windows.Controls;
     using System.Windows.Documents;
-    using System.Windows.Media;
-    using System.Windows.Navigation;
 
-    /// <summary>
-    /// Interaction logic for DataTransferWindowControl.
-    /// </summary>
+    /// <summary>Transactional SQL Server-to-SQL Server data transfer.</summary>
     public partial class DataTransferWindowControl : UserControl
     {
+        private readonly ToolWindowThemeController themeController;
+        private ScriptFactoryAccess.ConnectionInfo source;
+        private ScriptFactoryAccess.ConnectionInfo target;
+        private CancellationTokenSource cancellation;
 
-        private CancellationTokenSource _cancellationTokenSource;
-        private Stopwatch stopwatch;
-        private readonly ToolWindowThemeController _themeController;
-
-        private string sourceConnectionString = "";
-        private string targetConnectionString = "";
-
-        private string sourceConnectionStringPsql = "";
-
-        private string sourceConnectionStringMySql = "";
-        private string sourceConnectionStringFromPsql = "";
-        private string targetConnectionStringFromPsql = "";
-
-        private string sourceConnectionStringFromMySql = "";
-        private string targetConnectionStringFromMySql = "";
-
-        private const int DefaultPostgresPort = 5432;
-        private const int DefaultMySqlPort = 3306;
-
-
-        static class SqlBulkCopyHelper
-        {
-            static FieldInfo rowsCopiedField = null;
-
-            /// <summary>
-            /// Gets the rows copied from the specified SqlBulkCopy object
-            /// </summary>
-            /// <param name="bulkCopy">The bulk copy.</param>
-            /// <returns></returns>
-            public static Int64 GetRowsCopied(SqlBulkCopy bulkCopy)
-            {
-                if (rowsCopiedField == null)
-                {
-                    rowsCopiedField = typeof(SqlBulkCopy).GetField("_rowsCopied", BindingFlags.NonPublic | BindingFlags.GetField | BindingFlags.Instance);
-                }
-
-                return (Int64)rowsCopiedField.GetValue(bulkCopy);
-            }
-        }
-
-        /// <summary>
-        /// Initializes a new instance of the <see cref="DataTransferWindowControl"/> class.
-        /// </summary>
         public DataTransferWindowControl()
         {
-            this.InitializeComponent();
-            _themeController = new ToolWindowThemeController(this, ApplyThemeBrushResources);
-
-            Button_CopyData.IsEnabled = false;
-            ButtonToPsql_CopyData.IsEnabled = false;
-            ButtonToMySql_CopyData.IsEnabled = false;
-            ButtonFromPsql_CopyData.IsEnabled = false;
-            ButtonFromMySql_CopyData.IsEnabled = false;
-            Button_Cancel.Visibility = System.Windows.Visibility.Collapsed;
-
-            CheckBox_CreateTargetTableToPsql.IsChecked = true;
-            CheckBox_CreateTargetTableToMySql.IsChecked = true;
-            CheckBox_CreateTargetTableFromPsql.IsChecked = true;
-            CheckBox_CreateTargetTableFromMySql.IsChecked = true;
-
-            TextBox_TargetPsqlServer.Text = "127.0.0.1";
-            TextBox_TargetPsqlPort.Text = DefaultPostgresPort.ToString();
-            TextBox_TargetPsqlDatabase.Text = "postgres";
-            TextBox_TargetPsqlUsername.Text = "postgres";
-            PasswordBox_TargetPsqlPassword.Password = "postgres";
-
-            TextBox_TargetMySqlServer.Text = "127.0.0.1";
-            TextBox_TargetMySqlPort.Text = DefaultMySqlPort.ToString();
-            TextBox_TargetMySqlDatabase.Text = "mysql";
-            TextBox_TargetMySqlUsername.Text = "root";
-            PasswordBox_TargetMySqlPassword.Password = "root";
-            
-
-            TextBox_SourcePsqlServer.Text = "127.0.0.1";
-            TextBox_SourcePsqlPort.Text = DefaultPostgresPort.ToString();
-            TextBox_SourcePsqlDatabase.Text = "postgres";
-            TextBox_SourcePsqlUsername.Text = "postgres";
-            PasswordBox_SourcePsqlPassword.Password = "postgres";
-
-            TextBox_SourceMySqlServer.Text = "127.0.0.1";
-            TextBox_SourceMySqlPort.Text = DefaultMySqlPort.ToString();
-            TextBox_SourceMySqlDatabase.Text = "mysql";
-            TextBox_SourceMySqlUsername.Text = "root";
-            PasswordBox_SourceMySqlPassword.Password = "root";
-
-        }
-
-        private void ApplyThemeBrushResources()
-        {
-            ToolWindowThemeResources.ApplySharedTheme(this);
-        }
-
-        private void WikiLink_RequestNavigate(object sender, RequestNavigateEventArgs e)
-        {
-            ToolWindowNavigation.HandleRequestNavigate(e);
-        }
-
-        private void Button_EditSavedConnections_Click(object sender, RoutedEventArgs e)
-        {
-            var window = new SavedConnectionManagerWindow
-            {
-                Owner = Window.GetWindow(this)
-            };
-            window.ShowDialog();
-        }
-
-        private void Button_PickTargetPsql_Click(object sender, RoutedEventArgs e)
-        {
-            var connection = PickSavedConnection(SettingsManager.DataTransferProvider.PostgreSql, "Select a PostgreSQL connection");
-            if (connection != null)
-            {
-                ApplyPostgresConnection(connection, isTarget: true);
-            }
-        }
-
-        private void Button_PickTargetMySql_Click(object sender, RoutedEventArgs e)
-        {
-            var connection = PickSavedConnection(SettingsManager.DataTransferProvider.MySql, "Select a MySQL connection");
-            if (connection != null)
-            {
-                ApplyMySqlConnection(connection, isTarget: true);
-            }
-        }
-
-        private void Button_PickSourcePsql_Click(object sender, RoutedEventArgs e)
-        {
-            var connection = PickSavedConnection(SettingsManager.DataTransferProvider.PostgreSql, "Select a PostgreSQL connection");
-            if (connection != null)
-            {
-                ApplyPostgresConnection(connection, isTarget: false);
-            }
-        }
-
-        private void Button_PickSourceMySql_Click(object sender, RoutedEventArgs e)
-        {
-            var connection = PickSavedConnection(SettingsManager.DataTransferProvider.MySql, "Select a MySQL connection");
-            if (connection != null)
-            {
-                ApplyMySqlConnection(connection, isTarget: false);
-            }
-        }
-
-        private SettingsManager.DataTransferSavedConnection PickSavedConnection(SettingsManager.DataTransferProvider provider, string title)
-        {
-            List<SettingsManager.DataTransferSavedConnection> connections = SettingsManager.GetDataTransferSavedConnections();
-            var filtered = connections.FindAll(conn => conn.Provider == provider);
-            if (filtered.Count == 0)
-            {
-                LocalizedMessageBox.Show("No saved connections found. Use \"Edit Saved Connections\" to add one.", "Data Transfer");
-                return null;
-            }
-
-            var picker = new SavedConnectionPickerWindow(filtered, title)
-            {
-                Owner = Window.GetWindow(this)
-            };
-
-            return picker.ShowDialog() == true ? picker.SelectedConnection : null;
-        }
-
-        private void ApplyPostgresConnection(SettingsManager.DataTransferSavedConnection connection, bool isTarget)
-        {
-            if (isTarget)
-            {
-                TextBox_TargetPsqlServer.Text = connection.Server;
-                TextBox_TargetPsqlPort.Text = connection.Port.ToString();
-                TextBox_TargetPsqlDatabase.Text = connection.Database;
-                TextBox_TargetPsqlUsername.Text = connection.Username;
-                PasswordBox_TargetPsqlPassword.Password = connection.Password ?? string.Empty;
-            }
-            else
-            {
-                TextBox_SourcePsqlServer.Text = connection.Server;
-                TextBox_SourcePsqlPort.Text = connection.Port.ToString();
-                TextBox_SourcePsqlDatabase.Text = connection.Database;
-                TextBox_SourcePsqlUsername.Text = connection.Username;
-                PasswordBox_SourcePsqlPassword.Password = connection.Password ?? string.Empty;
-            }
-        }
-
-        private void ApplyMySqlConnection(SettingsManager.DataTransferSavedConnection connection, bool isTarget)
-        {
-            if (isTarget)
-            {
-                TextBox_TargetMySqlServer.Text = connection.Server;
-                TextBox_TargetMySqlPort.Text = connection.Port.ToString();
-                TextBox_TargetMySqlDatabase.Text = connection.Database;
-                TextBox_TargetMySqlUsername.Text = connection.Username;
-                PasswordBox_TargetMySqlPassword.Password = connection.Password ?? string.Empty;
-            }
-            else
-            {
-                TextBox_SourceMySqlServer.Text = connection.Server;
-                TextBox_SourceMySqlPort.Text = connection.Port.ToString();
-                TextBox_SourceMySqlDatabase.Text = connection.Database;
-                TextBox_SourceMySqlUsername.Text = connection.Username;
-                PasswordBox_SourceMySqlPassword.Password = connection.Password ?? string.Empty;
-            }
-        }
-
-        private async void SqlToSql_CopyData_UpdateStatusAsync(object bulkCopySender, SqlRowsCopiedEventArgs eventArgs)
-        {
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(_cancellationTokenSource.Token);
-
-            TimeSpan ts = stopwatch.Elapsed;
-
-            Label_CopyProgress.Content = $"Rows copied: {eventArgs.RowsCopied:#,0} in {(int)ts.TotalSeconds:#,0} sec.";
-
-        }
-
-        private async void ButtonCopyData_Click(object sender, RoutedEventArgs e)
-        {
-            // await SqlToSql_CopyDataAsync();
-
-            _cancellationTokenSource = new CancellationTokenSource();
-
-            stopwatch = Stopwatch.StartNew();
-
-            // update counter on the form with the last update time 
-            {
-
-                Button_CopyData.Visibility = System.Windows.Visibility.Collapsed;
-                Button_Cancel.Visibility = System.Windows.Visibility.Visible;
-
-                try
-                {
-
-                    int batchSize = 10000;
-                    long totalRowsCopied = 0;
-
-                    TextRange textRange = new TextRange(RichTextBox_SourceQuery.Document.ContentStart, RichTextBox_SourceQuery.Document.ContentEnd);
-                    string sourceQuery = textRange.Text;
-
-                    string targetTableName = TextBox_TargetTable.Text;
-
-                    using (SqlConnection sourceConn = new SqlConnection(sourceConnectionString))
-                    {
-                        await sourceConn.OpenAsync();
-                        using (SqlCommand cmd = new SqlCommand(sourceQuery, sourceConn))
-                        {
-                            cmd.CommandTimeout = 0;
-
-                            Label_CopyProgress.Content = "Retrieving data from the source...";
-
-                            using (SqlDataReader reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, _cancellationTokenSource.Token))
-                            {
-
-                                using (SqlConnection targetConn = new SqlConnection(targetConnectionString))
-                                {
-                                    await targetConn.OpenAsync();
-                                    //var targetTransaction = targetConn.BeginTransaction();
-
-                                    //-- Create target table
-                                    string targetColumns = "";
-                                    DataTable schemaTable = reader.GetSchemaTable();
-                                    foreach (DataRow schemaRow in schemaTable.Rows)
-                                    {
-                                        string columnName = schemaRow[0].ToString();
-                                        string sqlDataTypeName = GridAccess.GetColumnSqlType(schemaRow);
-
-                                        targetColumns += (targetColumns == "" ? "" : ",\n");
-                                        targetColumns += columnName + " " + sqlDataTypeName;
-                                    }
-
-                                    string targetTableCommand =
-                                        $"IF OBJECT_ID('{targetTableName}') IS NULL \n" +
-                                        $"CREATE TABLE {targetTableName} ({targetColumns})";
-
-                                    using (SqlCommand targetCmd = new SqlCommand(targetTableCommand, targetConn)) //, targetTransaction))
-                                    {
-                                        await targetCmd.ExecuteNonQueryAsync();
-                                    }
-
-                                    SqlBulkCopyOptions options = SqlBulkCopyOptions.Default;
-
-                                    // Combine options based on checkbox states
-                                    if (KeepIdentityOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.KeepIdentity;
-
-                                    if (CheckConstraintsOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.CheckConstraints;
-
-                                    if (TableLockOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.TableLock;
-
-                                    if (KeepNullsOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.KeepNulls;
-
-                                    if (FireTriggersOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.FireTriggers;
-
-                                    //if (UseInternalTransactionOption.IsChecked == true)
-                                    //    options |= SqlBulkCopyOptions.UseInternalTransaction;
-
-                                    if (AllowEncryptedValueModificationsOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.AllowEncryptedValueModifications;
-
-
-                                    using (SqlBulkCopy bulkCopy = new SqlBulkCopy(targetConn, options, null))
-                                    {
-
-                                      
-                                        bulkCopy.DestinationTableName = targetTableName;
-                                        bulkCopy.BatchSize = batchSize;
-                                        bulkCopy.NotifyAfter = batchSize;
-                                        bulkCopy.SqlRowsCopied += SqlToSql_CopyData_UpdateStatusAsync;
-
-                                        await bulkCopy.WriteToServerAsync(reader, _cancellationTokenSource.Token);
-
-                                        totalRowsCopied = SqlBulkCopyHelper.GetRowsCopied(bulkCopy);
-                                    }
-
-                                    //targetTransaction.Commit();
-
-                                }                               
-                            }
-                        }
-                    }
-
-                    TimeSpan ts = stopwatch.Elapsed;
-
-                    Label_CopyProgress.Content = $"Completed | Total rows copied: {totalRowsCopied:#,0} in {(int)ts.TotalSeconds:#,0} sec.";
-
-                }
-                catch (Exception ex)
-                {
-                    LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
-                }
-
-                Button_CopyData.Visibility = System.Windows.Visibility.Visible;
-                Button_Cancel.Visibility = System.Windows.Visibility.Collapsed;
-
-                stopwatch.Stop();
-
-            }
-
-        }
-
-        private void ButtonCancel_Click(object sender, RoutedEventArgs e)
-        {
-            _cancellationTokenSource.Cancel();
+            InitializeComponent();
+            themeController = new ToolWindowThemeController(this, () => ToolWindowThemeResources.ApplySharedTheme(this));
         }
 
         private void Button_SelectSource_Click(object sender, RoutedEventArgs e)
         {
-            var ci = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
-
-            sourceConnectionString = ci.FullConnectionString;
-
-            Label_SourceDescription.Content = $"Server: [{ci.ServerName}] / Database: [{ci.Database}]";
-
-            SetCopyCommandAvailability();
-        }
-
-        private void Button_SelectSourceToMySql_Click(object sender, RoutedEventArgs e)
-        {
-            var ci = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
-
-            sourceConnectionStringMySql = ci.FullConnectionString;
-
-            Label_SourceDescriptionToMySql.Content = $"Server: [{ci.ServerName}] / Database: [{ci.Database}]";
-            SetCopyCommandAvailabilityToMySql();
-        }
-
-        private void Button_SelectTargetFromPsql_Click(object sender, RoutedEventArgs e)
-        {
-            var ci = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
-
-            targetConnectionStringFromPsql = ci.FullConnectionString;
-
-            Label_TargetDescriptionFromPsql.Content = $"Server: [{ci.ServerName}] / Database: [{ci.Database}]";
-            SetCopyCommandAvailabilityFromPsql();
-        }
-
-        private void Button_SelectTargetFromMySql_Click(object sender, RoutedEventArgs e)
-        {
-            var ci = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
-
-            targetConnectionStringFromMySql = ci.FullConnectionString;
-
-            Label_TargetDescriptionFromMySql.Content = $"Server: [{ci.ServerName}] / Database: [{ci.Database}]";
-            SetCopyCommandAvailabilityFromMySql();
+            source = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
+            Label_SourceDescription.Text = source?.DisplayName ?? "No SQL Server source selected";
+            UpdateAvailability();
         }
 
         private void Button_SelectTarget_Click(object sender, RoutedEventArgs e)
         {
-            var ci = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
-
-            targetConnectionString = ci.FullConnectionString;
-
-            Label_TargetDescription.Content = $"Server: [{ci.ServerName}] / Database: [{ci.Database}]";
-
-            SetCopyCommandAvailability();
+            target = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
+            Label_TargetDescription.Text = target?.DisplayName ?? "No SQL Server target selected";
+            UpdateAvailability();
         }
 
-        private void SetCopyCommandAvailability()
+        private void TextBox_TargetTable_TextChanged(object sender, TextChangedEventArgs e) => UpdateAvailability();
+
+        private void UpdateAvailability()
         {
-            if (string.IsNullOrEmpty(sourceConnectionString) || string.IsNullOrEmpty(targetConnectionString))
-            {
-                Button_CopyData.IsEnabled = false;
-            } else
-            {
-                Button_CopyData.IsEnabled = true;
-            }
+            if (Button_CopyData != null)
+                Button_CopyData.IsEnabled = cancellation == null && source != null && target != null && !string.IsNullOrWhiteSpace(TextBox_TargetTable?.Text);
         }
 
-        private void SetCopyCommandAvailabilityToPsql()
+        private async void ButtonCopyData_Click(object sender, RoutedEventArgs e)
         {
-            ButtonToPsql_CopyData.IsEnabled = !string.IsNullOrEmpty(sourceConnectionStringPsql);
-        }
-
-        private void SetCopyCommandAvailabilityToMySql()
-        {
-            ButtonToMySql_CopyData.IsEnabled = !string.IsNullOrEmpty(sourceConnectionStringMySql);
-        }
-
-        private void SetCopyCommandAvailabilityFromPsql()
-        {
-            ButtonFromPsql_CopyData.IsEnabled = !string.IsNullOrEmpty(targetConnectionStringFromPsql);
-        }
-
-        private void SetCopyCommandAvailabilityFromMySql()
-        {
-            ButtonFromMySql_CopyData.IsEnabled = !string.IsNullOrEmpty(targetConnectionStringFromMySql);
-        }
-
-        private int ParsePort(string portText, int defaultPort)
-        {
-            return int.TryParse(portText, out int parsedPort) ? parsedPort : defaultPort;
-        }
-
-        private string BuildPostgresConnectionString(string server, string portText, string database, string username, string password)
-        {
-            var builder = new NpgsqlConnectionStringBuilder
-            {
-                Host = server,
-                Port = ParsePort(portText, DefaultPostgresPort),
-                Database = database,
-                Username = username,
-                Password = password
-            };
-
-            return builder.ConnectionString;
-        }
-
-        private string BuildMySqlConnectionString(string server, string portText, string database, string username, string password)
-        {
-            uint parsedPort = (uint)ParsePort(portText, DefaultMySqlPort);
-            var builder = new MySqlConnectionStringBuilder
-            {
-                Server = server,
-                Port = parsedPort,
-                Database = database,
-                UserID = username,
-                Password = password,
-                AllowLoadLocalInfile = true
-            };
-
-            return builder.ConnectionString;
-        }
-
-        private string BuildTargetPostgresConnectionString()
-        {
-            return BuildPostgresConnectionString(
-                TextBox_TargetPsqlServer.Text,
-                TextBox_TargetPsqlPort.Text,
-                TextBox_TargetPsqlDatabase.Text,
-                TextBox_TargetPsqlUsername.Text,
-                PasswordBox_TargetPsqlPassword.Password);
-        }
-
-        private string BuildSourcePostgresConnectionString()
-        {
-            return BuildPostgresConnectionString(
-                TextBox_SourcePsqlServer.Text,
-                TextBox_SourcePsqlPort.Text,
-                TextBox_SourcePsqlDatabase.Text,
-                TextBox_SourcePsqlUsername.Text,
-                PasswordBox_SourcePsqlPassword.Password);
-        }
-
-        private string BuildTargetMySqlConnectionString()
-        {
-            return BuildMySqlConnectionString(
-                TextBox_TargetMySqlServer.Text,
-                TextBox_TargetMySqlPort.Text,
-                TextBox_TargetMySqlDatabase.Text,
-                TextBox_TargetMySqlUsername.Text,
-                PasswordBox_TargetMySqlPassword.Password);
-        }
-
-        private string BuildSourceMySqlConnectionString()
-        {
-            return BuildMySqlConnectionString(
-                TextBox_SourceMySqlServer.Text,
-                TextBox_SourceMySqlPort.Text,
-                TextBox_SourceMySqlDatabase.Text,
-                TextBox_SourceMySqlUsername.Text,
-                PasswordBox_SourceMySqlPassword.Password);
-        }
-
-        string MapSqlServerToPostgresType(string sqlServerType)
-        {
-            switch (sqlServerType)
-            {
-                case "System.Byte": return "SMALLINT"; // SQL Server tinyint (0-255)
-                case "System.Int16": return "SMALLINT"; // SQL Server smallint
-                case "System.Int32": return "INTEGER";
-                case "System.Int64": return "BIGINT";
-                case "System.Decimal": return "NUMERIC";
-                case "System.Double": return "DOUBLE PRECISION";
-                case "System.Single": return "REAL";
-                case "System.String": return "TEXT";
-                case "System.Boolean": return "BOOLEAN";
-                case "System.DateTime": return "TIMESTAMP";
-                case "System.Guid": return "UUID";
-                case "System.Byte[]": return "BYTEA";
-                default: return "TEXT"; // Default to TEXT for unknown types
-            }
-        }
-
-        string MapClrToMySqlType(Type clrType)
-        {
-            switch (Type.GetTypeCode(clrType))
-            {
-                case TypeCode.Int32: return "INT";
-                case TypeCode.Int64: return "BIGINT";
-                case TypeCode.Int16: return "SMALLINT";
-                case TypeCode.Decimal: return "DECIMAL(38,10)";
-                case TypeCode.Double: return "DOUBLE";
-                case TypeCode.Single: return "FLOAT";
-                case TypeCode.String: return "TEXT";
-                case TypeCode.Boolean: return "BOOLEAN";
-                case TypeCode.DateTime: return "DATETIME";
-                default:
-                    if (clrType == typeof(Guid)) return "CHAR(36)";
-                    if (clrType == typeof(byte[])) return "LONGBLOB";
-                    return "TEXT";
-            }
-        }
-
-        string MapClrToSqlServerType(Type clrType)
-        {
-            switch (Type.GetTypeCode(clrType))
-            {
-                case TypeCode.Int32: return "INT";
-                case TypeCode.Int64: return "BIGINT";
-                case TypeCode.Int16: return "SMALLINT";
-                case TypeCode.Decimal: return "DECIMAL(38,10)";
-                case TypeCode.Double: return "FLOAT";
-                case TypeCode.Single: return "REAL";
-                case TypeCode.String: return "NVARCHAR(MAX)";
-                case TypeCode.Boolean: return "BIT";
-                case TypeCode.DateTime: return "DATETIME2";
-                default:
-                    if (clrType == typeof(Guid)) return "UNIQUEIDENTIFIER";
-                    if (clrType == typeof(byte[])) return "VARBINARY(MAX)";
-                    if (clrType == typeof(DateTimeOffset)) return "DATETIMEOFFSET";
-                    return "NVARCHAR(MAX)";
-            }
-        }
-
-        private async void ButtonToPsql_CopyData_Click(object sender, RoutedEventArgs e)
-        {
-            // Ensure a target table name is provided.
-            if (string.IsNullOrEmpty(TextBox_TargetTableToPsql.Text))
-            {
-                TextBox_TargetTableToPsql.Text = $"data_export_{DateTime.Now:yyyyddMMHHmmss}";
-            }
-
-            // Create a cancellation token for the async operations.
-            _cancellationTokenSource = new CancellationTokenSource();
-            CancellationToken cancellationToken = _cancellationTokenSource.Token;
-
-            stopwatch = Stopwatch.StartNew();
-
+            if (source == null || target == null || string.IsNullOrWhiteSpace(TextBox_TargetTable.Text)) return;
+            cancellation = new CancellationTokenSource();
+            SetBusy(true);
+            var stopwatch = Stopwatch.StartNew();
             try
             {
-                // Update UI: hide the copy button and show the cancel button.
-                ButtonToPsql_CopyData.Visibility = System.Windows.Visibility.Collapsed;
-                ButtonToPsql_Cancel.Visibility = System.Windows.Visibility.Visible;
-
-                string postgresConnString = BuildTargetPostgresConnectionString();
-                // Get the SQL query from the rich text box.
-                TextRange textRange = new TextRange(RichTextBox_SourceQueryToPsql.Document.ContentStart,
-                                                    RichTextBox_SourceQueryToPsql.Document.ContentEnd);
-                string sqlQuery = textRange.Text;
-                string targetTable = TextBox_TargetTableToPsql.Text;
-
-                // Open SQL Server connection and execute the query asynchronously.
-                using (var sqlConn = new SqlConnection(sourceConnectionStringPsql))
-                {
-                    await sqlConn.OpenAsync(cancellationToken);
-                    using (var sqlCmd = new SqlCommand(sqlQuery, sqlConn))
-                    {
-                        sqlCmd.CommandTimeout = 0;
-                        // Use SequentialAccess for large data streams.
-                        using (var reader = await sqlCmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken))
-                        {
-                            // Get the schema information.
-                            DataTable schemaTable = reader.GetSchemaTable();
-                            if (schemaTable == null)
-                                throw new Exception("Failed to retrieve schema from SQL Server.");
-
-                            // Build the CREATE TABLE command for PostgreSQL.
-                            StringBuilder createTableQuery = new StringBuilder($"CREATE TABLE IF NOT EXISTS {targetTable} (");
-                            StringBuilder allTargetColumns = new StringBuilder();
-
-                            foreach (DataRow row in schemaTable.Rows)
-                            {
-                                string columnName = row["ColumnName"].ToString();
-                                string sqlServerType = row["DataType"].ToString();
-                                string postgresType = MapSqlServerToPostgresType(sqlServerType);
-
-                                createTableQuery.Append($"{columnName} {postgresType}, ");
-                                allTargetColumns.Append($"{columnName},");
-                            }
-
-                            // Remove the trailing comma and space.
-                            createTableQuery.Length -= 2;
-                            createTableQuery.Append(");");
-
-                            // Remove trailing comma from column list.
-                            allTargetColumns.Length--;
-                            string copyCommand = $"COPY {targetTable} ({allTargetColumns}) FROM STDIN (FORMAT BINARY)";
-
-                            // Open PostgreSQL connection asynchronously.
-                            using (var pgConn = new NpgsqlConnection(postgresConnString))
-                            {
-                                await pgConn.OpenAsync(cancellationToken);
-
-                                // Optionally create the target table.
-                                if (CheckBox_CreateTargetTableToPsql.IsChecked == true)
-                                {
-                                    using (var pgCmd = new NpgsqlCommand(createTableQuery.ToString(), pgConn))
-                                    {
-                                        await pgCmd.ExecuteNonQueryAsync(cancellationToken);
-                                    }
-                                }
-
-                                // Optionally truncate the target table.
-                                if (CheckBox_TruncateTargetTableToPsql.IsChecked == true)
-                                {
-                                    using (var pgCmd = new NpgsqlCommand($"TRUNCATE TABLE {targetTable} RESTART IDENTITY;", pgConn))
-                                    {
-                                        await pgCmd.ExecuteNonQueryAsync(cancellationToken);
-                                    }
-                                }
-
-                                int rowCount = 0;
-                                // Optionally perform the data copy.
-                                if (CheckBox_SkipDataCopyToPsql.IsChecked == false)
-                                {
-                                    // Begin the PostgreSQL binary import asynchronously.
-                                    using (var importer = await pgConn.BeginBinaryImportAsync(copyCommand, cancellationToken))
-                                    {
-                                        while (await reader.ReadAsync(cancellationToken))
-                                        {
-                                            // Start a new row in the COPY stream.
-                                            importer.StartRow();
-
-                                            for (int i = 0; i < reader.FieldCount; i++)
-                                            {
-                                                bool isNull = await reader.IsDBNullAsync(i, cancellationToken);
-                                                var value = isNull ? DBNull.Value : reader.GetValue(i);
-                                                // Write each column value asynchronously.
-                                                await importer.WriteAsync(value, cancellationToken);
-                                            }
-
-                                            rowCount++;
-
-                                            // Update progress every 1000 rows.
-                                            if (rowCount % 1000 == 0)
-                                            {
-                                                TimeSpan elapsed = stopwatch.Elapsed;
-                                                Label_CopyProgressToPsql.Content =
-                                                    $"Rows copied: {rowCount:#,0} in {(int)elapsed.TotalSeconds:#,0} sec.";
-                                            }
-
-                                            // Check for cancellation.
-                                            cancellationToken.ThrowIfCancellationRequested();
-                                        }
-                                        await importer.CompleteAsync(cancellationToken);
-                                    }
-                                }
-
-                                // Final status update.
-                                TimeSpan totalElapsed = stopwatch.Elapsed;
-                                Label_CopyProgressToPsql.Content =
-                                    $"Completed | Total rows copied: {rowCount:#,0} in {(int)totalElapsed.TotalSeconds:#,0} sec.";
-                            }
-                        }
-                    }
-                }
+                string sql = new TextRange(RichTextBox_SourceQuery.Document.ContentStart, RichTextBox_SourceQuery.Document.ContentEnd).Text.Trim();
+                if (string.IsNullOrWhiteSpace(sql)) throw new InvalidOperationException("Source query cannot be empty.");
+                long copied = await CopyAsync(sql, TextBox_TargetTable.Text.Trim(), cancellation.Token);
+                Label_CopyProgress.Text = $"Completed: {copied:#,0} rows committed in {stopwatch.Elapsed.TotalSeconds:#,0.0} seconds.";
             }
-            catch (OperationCanceledException)
-            {
-                LocalizedMessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
-            }
+            catch (OperationCanceledException) { Label_CopyProgress.Text = "Cancelled. SQL Server rolled back the target transaction."; }
             catch (Exception ex)
             {
-                LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
+                FeatureDiagnostics.Report("Data Transfer", "SQL Server transfer failed", ex);
+                Label_CopyProgress.Text = "Transfer failed: " + ex.Message;
+                LocalizedMessageBox.Show(ex.Message, "SQL Server Data Transfer", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally
             {
-                // Restore the buttons and stop the stopwatch.
-                ButtonToPsql_CopyData.Visibility = System.Windows.Visibility.Visible;
-                ButtonToPsql_Cancel.Visibility = System.Windows.Visibility.Collapsed;
                 stopwatch.Stop();
+                cancellation.Dispose();
+                cancellation = null;
+                SetBusy(false);
             }
         }
 
-
-        private void ButtonToPsql_Cancel_Click(object sender, RoutedEventArgs e)
+        private async Task<long> CopyAsync(string sourceSql, string targetName, CancellationToken token)
         {
-            _cancellationTokenSource.Cancel();
-        }
-
-        private void Button_SelectSourceToPsql_Click(object sender, RoutedEventArgs e)
-        {
-            var ci = ScriptFactoryAccess.GetCurrentConnectionInfoFromObjectExplorer();
-
-            sourceConnectionStringPsql = ci.FullConnectionString;
-
-            Label_SourceDescriptionToPsql.Content = $"Server: [{ci.ServerName}] / Database: [{ci.Database}]";
-            SetCopyCommandAvailabilityToPsql();
-        }
-
-        private async void ButtonToMySql_CopyData_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(TextBox_TargetTableToMySql.Text))
+            string quotedTarget = DatabaseIdentifier.SqlServerLocalObject(targetName);
+            string literalTarget = quotedTarget.Replace("'", "''");
+            using (var sourceConnection = new SqlConnection(source.FullConnectionString))
+            using (var targetConnection = new SqlConnection(target.FullConnectionString))
             {
-                TextBox_TargetTableToMySql.Text = $"data_export_{DateTime.Now:yyyyddMMHHmmss}";
-            }
-
-            _cancellationTokenSource = new CancellationTokenSource();
-            CancellationToken cancellationToken = _cancellationTokenSource.Token;
-
-            stopwatch = Stopwatch.StartNew();
-
-            ButtonToMySql_CopyData.Visibility = System.Windows.Visibility.Collapsed;
-            ButtonToMySql_Cancel.Visibility = System.Windows.Visibility.Visible;
-
-            try
-            {
-                TextRange textRange = new TextRange(RichTextBox_SourceQueryToMySql.Document.ContentStart,
-                                                    RichTextBox_SourceQueryToMySql.Document.ContentEnd);
-                string sqlQuery = textRange.Text;
-                string targetTable = TextBox_TargetTableToMySql.Text;
-                string targetMySqlConnString = BuildTargetMySqlConnectionString();
-
-                using (var sqlConn = new SqlConnection(sourceConnectionStringMySql))
+                await sourceConnection.OpenAsync(token);
+                await targetConnection.OpenAsync(token);
+                using (var sourceCommand = new SqlCommand(sourceSql, sourceConnection) { CommandTimeout = 120 })
+                using (SqlDataReader sourceReader = await sourceCommand.ExecuteReaderAsync(CommandBehavior.SequentialAccess, token))
+                using (var reader = new CountingDataReader(sourceReader))
+                using (SqlTransaction transaction = targetConnection.BeginTransaction(IsolationLevel.ReadCommitted))
                 {
-                    await sqlConn.OpenAsync(cancellationToken);
-                    using (var sqlCmd = new SqlCommand(sqlQuery, sqlConn))
+                    DataTable schema = reader.GetSchemaTable() ?? throw new InvalidOperationException("The source query did not return a tabular result.");
+                    string[] sourceColumns = schema.Rows.Cast<DataRow>().Select(row => Convert.ToString(row["ColumnName"])).ToArray();
+                    if (sourceColumns.Any(string.IsNullOrWhiteSpace))
+                        throw new InvalidOperationException("Every source expression must have a column name or alias.");
+                    if (sourceColumns.Distinct(StringComparer.OrdinalIgnoreCase).Count() != sourceColumns.Length)
+                        throw new InvalidOperationException("The source query returns duplicate column names. Add unique aliases before copying.");
+                    if (CheckBox_CreateTargetTable.IsChecked == true)
                     {
-                        sqlCmd.CommandTimeout = 0;
-                        using (var reader = await sqlCmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken))
+                        string definitions = string.Join("," + Environment.NewLine, schema.Rows.Cast<DataRow>().Select(row =>
+                            DatabaseIdentifier.SqlServerPart(Convert.ToString(row["ColumnName"])) + " " + GridAccess.GetColumnSqlType(row)));
+                        using (var create = new SqlCommand($"IF OBJECT_ID(N'{literalTarget}','U') IS NULL CREATE TABLE {quotedTarget} ({definitions});", targetConnection, transaction))
                         {
-                            DataTable schemaTable = reader.GetSchemaTable();
-                            if (schemaTable == null)
-                                throw new Exception("Failed to retrieve schema from SQL Server.");
-
-                            StringBuilder createTableQuery = new StringBuilder($"CREATE TABLE IF NOT EXISTS `{targetTable}` (");
-                            StringBuilder columnList = new StringBuilder();
-
-                            foreach (DataRow row in schemaTable.Rows)
-                            {
-                                string columnName = row["ColumnName"].ToString();
-                                var clrType = (Type)row["DataType"];
-                                string mysqlType = MapClrToMySqlType(clrType);
-
-                                createTableQuery.Append($"`{columnName}` {mysqlType}, ");
-                                columnList.Append($"`{columnName}`,");
-                            }
-
-                            createTableQuery.Length -= 2;
-                            createTableQuery.Append(");");
-                            columnList.Length--;
-
-                            using (var mySqlConn = new MySqlConnection(targetMySqlConnString))
-                            {
-                                await mySqlConn.OpenAsync(cancellationToken);
-
-                                if (CheckBox_CreateTargetTableToMySql.IsChecked == true)
-                                {
-                                    using (var createCmd = new MySqlCommand(createTableQuery.ToString(), mySqlConn))
-                                    {
-                                        await createCmd.ExecuteNonQueryAsync(cancellationToken);
-                                    }
-                                }
-
-                                if (CheckBox_TruncateTargetTableToMySql.IsChecked == true)
-                                {
-                                    using (var truncateCmd = new MySqlCommand($"TRUNCATE TABLE `{targetTable}`;", mySqlConn))
-                                    {
-                                        await truncateCmd.ExecuteNonQueryAsync(cancellationToken);
-                                    }
-                                }
-
-                                if (CheckBox_SkipDataCopyToMySql.IsChecked == false)
-                                {
-                                    //using (var localInfileCmd = new MySqlCommand("SET GLOBAL local_infile=1;", mySqlConn))
-                                    //{
-                                    //    await localInfileCmd.ExecuteNonQueryAsync(cancellationToken);
-                                    //}
-
-                                    using (var localInfileCheckCmd = new MySqlCommand("SHOW VARIABLES LIKE 'local_infile';", mySqlConn))
-                                    using (var localInfileReader = await localInfileCheckCmd.ExecuteReaderAsync(cancellationToken))
-                                    {
-                                        if (await localInfileReader.ReadAsync(cancellationToken))
-                                        {
-                                            string localInfileValue = localInfileReader.GetString("Value");
-                                            if (!string.Equals(localInfileValue, "ON", StringComparison.OrdinalIgnoreCase) &&
-                                                !string.Equals(localInfileValue, "1", StringComparison.OrdinalIgnoreCase))
-                                            {
-                                                LocalizedMessageBox.Show(
-                                                    "MySQL local infile is disabled. Enable local_infile on the server (and ensure AllowLoadLocalInfile is true) to use bulk copy.",
-                                                    "DataTransferWindow");
-                                                return;
-                                            }
-                                        }
-                                    }
-
-                                    var bulkCopy = new MySqlBulkCopy(mySqlConn)
-                                    {
-                                        DestinationTableName = targetTable,
-                                        BulkCopyTimeout = 0,
-                                        NotifyAfter = 10000
-                                    };
-
-                                    bulkCopy.MySqlRowsCopied += async (s, args) =>
-                                    {
-                                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
-                                        TimeSpan elapsed = stopwatch.Elapsed;
-                                        Label_CopyProgressToMySql.Content = $"Rows copied: {args.RowsCopied:#,0} in {(int)elapsed.TotalSeconds:#,0} sec.";
-                                    };
-
-                                    foreach (DataRow row in schemaTable.Rows)
-                                    {
-                                        string columnName = row["ColumnName"].ToString();
-                                        int sourceOrdinal = Convert.ToInt32(row["ColumnOrdinal"]);
-                                        bulkCopy.ColumnMappings.Add(new MySqlBulkCopyColumnMapping(sourceOrdinal, columnName));
-                                    }
-
-                                    var result = await bulkCopy.WriteToServerAsync(reader, cancellationToken);
-
-                                    TimeSpan totalElapsed = stopwatch.Elapsed;
-                                    Label_CopyProgressToMySql.Content =
-                                        $"Completed | Total rows copied: {result.RowsInserted:#,0} in {(int)totalElapsed.TotalSeconds:#,0} sec.";
-                                }
-                            }
+                            create.CommandTimeout = 120;
+                            await create.ExecuteNonQueryAsync(token);
                         }
                     }
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                LocalizedMessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
-            }
-            catch (Exception ex)
-            {
-                LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
-            }
-            finally
-            {
-                ButtonToMySql_CopyData.Visibility = System.Windows.Visibility.Visible;
-                ButtonToMySql_Cancel.Visibility = System.Windows.Visibility.Collapsed;
-                stopwatch.Stop();
-            }
-        }
+                    using (var verify = new SqlCommand($"IF OBJECT_ID(N'{literalTarget}','U') IS NULL THROW 50000,'Target table does not exist.',1;", targetConnection, transaction))
+                        await verify.ExecuteNonQueryAsync(token);
+                    if (CheckBox_TruncateTargetTable.IsChecked == true)
+                        using (var truncate = new SqlCommand($"TRUNCATE TABLE {quotedTarget};", targetConnection, transaction)) await truncate.ExecuteNonQueryAsync(token);
 
-        private void ButtonToMySql_Cancel_Click(object sender, RoutedEventArgs e)
-        {
-            _cancellationTokenSource.Cancel();
-        }
-
-        private async void ButtonFromPsql_CopyData_Click(object sender, RoutedEventArgs e)
-        {
-            if (string.IsNullOrEmpty(TextBox_TargetTableFromPsql.Text))
-            {
-                TextBox_TargetTableFromPsql.Text = $"data_import_{DateTime.Now:yyyyddMMHHmmss}";
-            }
-
-            _cancellationTokenSource = new CancellationTokenSource();
-            CancellationToken cancellationToken = _cancellationTokenSource.Token;
-            stopwatch = Stopwatch.StartNew();
-
-            ButtonFromPsql_CopyData.Visibility = System.Windows.Visibility.Collapsed;
-            ButtonFromPsql_Cancel.Visibility = System.Windows.Visibility.Visible;
-
-            try
-            {
-                TextRange textRange = new TextRange(RichTextBox_SourceQueryFromPsql.Document.ContentStart,
-                                                    RichTextBox_SourceQueryFromPsql.Document.ContentEnd);
-                string sqlQuery = textRange.Text;
-                string targetTable = TextBox_TargetTableFromPsql.Text;
-                sourceConnectionStringFromPsql = BuildSourcePostgresConnectionString();
-
-                using (var npgConn = new NpgsqlConnection(sourceConnectionStringFromPsql))
-                {
-                    await npgConn.OpenAsync(cancellationToken);
-                    using (var cmd = new NpgsqlCommand(sqlQuery, npgConn))
+                    SqlBulkCopyOptions options = SqlBulkCopyOptions.TableLock | (CheckBox_KeepIdentity.IsChecked == true ? SqlBulkCopyOptions.KeepIdentity : SqlBulkCopyOptions.Default);
+                    if (CheckBox_CheckConstraints.IsChecked == true) options |= SqlBulkCopyOptions.CheckConstraints;
+                    if (CheckBox_FireTriggers.IsChecked == true) options |= SqlBulkCopyOptions.FireTriggers;
+                    using (var bulk = new SqlBulkCopy(targetConnection, options, transaction))
                     {
-                        cmd.CommandTimeout = 0;
-                        using (var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken))
+                        bulk.DestinationTableName = quotedTarget;
+                        bulk.BatchSize = 5000;
+                        bulk.NotifyAfter = 5000;
+                        bulk.BulkCopyTimeout = 120;
+                        foreach (DataRow row in schema.Rows)
                         {
-                            DataTable schemaTable = reader.GetSchemaTable();
-                            if (schemaTable == null)
-                                throw new Exception("Failed to retrieve schema from PostgreSQL.");
-
-                            string targetColumns = "";
-                            foreach (DataRow schemaRow in schemaTable.Rows)
-                            {
-                                string columnName = schemaRow["ColumnName"].ToString();
-                                var clrType = (Type)schemaRow["DataType"];
-                                string sqlDataTypeName = MapClrToSqlServerType(clrType);
-
-                                targetColumns += (targetColumns == "" ? "" : ",\n");
-                                targetColumns += $"[{columnName}] {sqlDataTypeName}";
-                            }
-
-                            string targetTableCommand =
-                                $"IF OBJECT_ID('{targetTable}') IS NULL \n" +
-                                $"CREATE TABLE {targetTable} ({targetColumns})";
-
-                            using (SqlConnection targetConn = new SqlConnection(targetConnectionStringFromPsql))
-                            {
-                                await targetConn.OpenAsync(cancellationToken);
-
-                                if (CheckBox_CreateTargetTableFromPsql.IsChecked == true)
-                                {
-                                    using (SqlCommand targetCmd = new SqlCommand(targetTableCommand, targetConn))
-                                    {
-                                        await targetCmd.ExecuteNonQueryAsync(cancellationToken);
-                                    }
-                                }
-
-                                if (CheckBox_TruncateTargetTableFromPsql.IsChecked == true)
-                                {
-                                    using (SqlCommand truncateCmd = new SqlCommand($"TRUNCATE TABLE {targetTable};", targetConn))
-                                    {
-                                        await truncateCmd.ExecuteNonQueryAsync(cancellationToken);
-                                    }
-                                }
-
-                                if (CheckBox_SkipDataCopyFromPsql.IsChecked == false)
-                                {
-                                    SqlBulkCopyOptions options = SqlBulkCopyOptions.Default;
-
-                                    if (KeepIdentityOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.KeepIdentity;
-
-                                    if (CheckConstraintsOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.CheckConstraints;
-
-                                    if (TableLockOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.TableLock;
-
-                                    if (KeepNullsOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.KeepNulls;
-
-                                    if (FireTriggersOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.FireTriggers;
-
-                                    if (AllowEncryptedValueModificationsOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.AllowEncryptedValueModifications;
-
-                                    using (SqlBulkCopy bulkCopy = new SqlBulkCopy(targetConn, options, null))
-                                    {
-                                        bulkCopy.DestinationTableName = targetTable;
-                                        bulkCopy.BatchSize = 10000;
-                                        bulkCopy.NotifyAfter = 10000;
-
-                                        bulkCopy.SqlRowsCopied += async (s, args) =>
-                                        {
-                                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
-                                            TimeSpan elapsed = stopwatch.Elapsed;
-                                            Label_CopyProgressFromPsql.Content = $"Rows copied: {args.RowsCopied:#,0} in {(int)elapsed.TotalSeconds:#,0} sec.";
-                                        };
-
-                                        foreach (DataRow schemaRow in schemaTable.Rows)
-                                        {
-                                            string columnName = schemaRow["ColumnName"].ToString();
-                                            bulkCopy.ColumnMappings.Add(columnName, columnName);
-                                        }
-
-                                        await bulkCopy.WriteToServerAsync(reader, cancellationToken);
-
-                                        long totalRowsCopied = SqlBulkCopyHelper.GetRowsCopied(bulkCopy);
-                                        TimeSpan ts = stopwatch.Elapsed;
-                                        Label_CopyProgressFromPsql.Content = $"Completed | Total rows copied: {totalRowsCopied:#,0} in {(int)ts.TotalSeconds:#,0} sec.";
-                                    }
-                                }
-                            }
+                            string name = Convert.ToString(row["ColumnName"]);
+                            bulk.ColumnMappings.Add(name, name);
                         }
+                        bulk.SqlRowsCopied += (s, e) => Dispatcher.BeginInvoke(new Action(() => Label_CopyProgress.Text = $"Copied {e.RowsCopied:#,0} rows; transaction not committed yet..."));
+                        await bulk.WriteToServerAsync(reader, token);
                     }
+                    transaction.Commit();
+                    return reader.RowsRead;
                 }
             }
-            catch (OperationCanceledException)
-            {
-                LocalizedMessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
-            }
-            catch (Exception ex)
-            {
-                LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
-            }
-            finally
-            {
-                ButtonFromPsql_CopyData.Visibility = System.Windows.Visibility.Visible;
-                ButtonFromPsql_Cancel.Visibility = System.Windows.Visibility.Collapsed;
-                stopwatch.Stop();
-            }
         }
 
-        private void ButtonFromPsql_Cancel_Click(object sender, RoutedEventArgs e)
+        private sealed class CountingDataReader : DbDataReader
         {
-            _cancellationTokenSource.Cancel();
+            private readonly DbDataReader inner;
+            public CountingDataReader(DbDataReader inner) { this.inner = inner ?? throw new ArgumentNullException(nameof(inner)); }
+            public long RowsRead { get; private set; }
+            public override bool Read() { bool value = inner.Read(); if (value) RowsRead++; return value; }
+            public override async Task<bool> ReadAsync(CancellationToken cancellationToken) { bool value = await inner.ReadAsync(cancellationToken); if (value) RowsRead++; return value; }
+            public override bool NextResult() => inner.NextResult();
+            public override Task<bool> NextResultAsync(CancellationToken cancellationToken) => inner.NextResultAsync(cancellationToken);
+            public override int Depth => inner.Depth;
+            public override int FieldCount => inner.FieldCount;
+            public override bool HasRows => inner.HasRows;
+            public override bool IsClosed => inner.IsClosed;
+            public override int RecordsAffected => inner.RecordsAffected;
+            public override object this[int ordinal] => inner[ordinal];
+            public override object this[string name] => inner[name];
+            public override bool GetBoolean(int ordinal) => inner.GetBoolean(ordinal);
+            public override byte GetByte(int ordinal) => inner.GetByte(ordinal);
+            public override long GetBytes(int ordinal, long dataOffset, byte[] buffer, int bufferOffset, int length) => inner.GetBytes(ordinal, dataOffset, buffer, bufferOffset, length);
+            public override char GetChar(int ordinal) => inner.GetChar(ordinal);
+            public override long GetChars(int ordinal, long dataOffset, char[] buffer, int bufferOffset, int length) => inner.GetChars(ordinal, dataOffset, buffer, bufferOffset, length);
+            public override string GetDataTypeName(int ordinal) => inner.GetDataTypeName(ordinal);
+            public override DateTime GetDateTime(int ordinal) => inner.GetDateTime(ordinal);
+            public override decimal GetDecimal(int ordinal) => inner.GetDecimal(ordinal);
+            public override double GetDouble(int ordinal) => inner.GetDouble(ordinal);
+            public override Type GetFieldType(int ordinal) => inner.GetFieldType(ordinal);
+            public override float GetFloat(int ordinal) => inner.GetFloat(ordinal);
+            public override Guid GetGuid(int ordinal) => inner.GetGuid(ordinal);
+            public override short GetInt16(int ordinal) => inner.GetInt16(ordinal);
+            public override int GetInt32(int ordinal) => inner.GetInt32(ordinal);
+            public override long GetInt64(int ordinal) => inner.GetInt64(ordinal);
+            public override string GetName(int ordinal) => inner.GetName(ordinal);
+            public override int GetOrdinal(string name) => inner.GetOrdinal(name);
+            public override string GetString(int ordinal) => inner.GetString(ordinal);
+            public override object GetValue(int ordinal) => inner.GetValue(ordinal);
+            public override int GetValues(object[] values) => inner.GetValues(values);
+            public override bool IsDBNull(int ordinal) => inner.IsDBNull(ordinal);
+            public override DataTable GetSchemaTable() => inner.GetSchemaTable();
+            public override IEnumerator GetEnumerator() => ((IEnumerable)inner).GetEnumerator();
+            public override void Close() => inner.Close();
         }
 
-        private async void ButtonFromMySql_CopyData_Click(object sender, RoutedEventArgs e)
+        private void Button_Cancel_Click(object sender, RoutedEventArgs e)
         {
-            if (string.IsNullOrEmpty(TextBox_TargetTableFromMySql.Text))
-            {
-                TextBox_TargetTableFromMySql.Text = $"data_import_{DateTime.Now:yyyyddMMHHmmss}";
-            }
-
-            _cancellationTokenSource = new CancellationTokenSource();
-            CancellationToken cancellationToken = _cancellationTokenSource.Token;
-            stopwatch = Stopwatch.StartNew();
-
-            ButtonFromMySql_CopyData.Visibility = System.Windows.Visibility.Collapsed;
-            ButtonFromMySql_Cancel.Visibility = System.Windows.Visibility.Visible;
-
-            try
-            {
-                TextRange textRange = new TextRange(RichTextBox_SourceQueryFromMySql.Document.ContentStart,
-                                                    RichTextBox_SourceQueryFromMySql.Document.ContentEnd);
-                string sqlQuery = textRange.Text;
-                string targetTable = TextBox_TargetTableFromMySql.Text;
-                sourceConnectionStringFromMySql = BuildSourceMySqlConnectionString();
-
-                using (var mySqlConn = new MySqlConnection(sourceConnectionStringFromMySql))
-                {
-                    await mySqlConn.OpenAsync(cancellationToken);
-                    using (var cmd = new MySqlCommand(sqlQuery, mySqlConn))
-                    {
-                        cmd.CommandTimeout = 0;
-                        using (var reader = await cmd.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken))
-                        {
-                            DataTable schemaTable = reader.GetSchemaTable();
-                            if (schemaTable == null)
-                                throw new Exception("Failed to retrieve schema from MySQL.");
-
-                            string targetColumns = "";
-                            foreach (DataRow schemaRow in schemaTable.Rows)
-                            {
-                                string columnName = schemaRow["ColumnName"].ToString();
-                                var clrType = (Type)schemaRow["DataType"];
-                                string sqlDataTypeName = MapClrToSqlServerType(clrType);
-
-                                targetColumns += (targetColumns == "" ? "" : ",\n");
-                                targetColumns += $"[{columnName}] {sqlDataTypeName}";
-                            }
-
-                            string targetTableCommand =
-                                $"IF OBJECT_ID('{targetTable}') IS NULL \n" +
-                                $"CREATE TABLE {targetTable} ({targetColumns})";
-
-                            using (SqlConnection targetConn = new SqlConnection(targetConnectionStringFromMySql))
-                            {
-                                await targetConn.OpenAsync(cancellationToken);
-
-                                if (CheckBox_CreateTargetTableFromMySql.IsChecked == true)
-                                {
-                                    using (SqlCommand targetCmd = new SqlCommand(targetTableCommand, targetConn))
-                                    {
-                                        await targetCmd.ExecuteNonQueryAsync(cancellationToken);
-                                    }
-                                }
-
-                                if (CheckBox_TruncateTargetTableFromMySql.IsChecked == true)
-                                {
-                                    using (SqlCommand truncateCmd = new SqlCommand($"TRUNCATE TABLE {targetTable};", targetConn))
-                                    {
-                                        await truncateCmd.ExecuteNonQueryAsync(cancellationToken);
-                                    }
-                                }
-
-                                if (CheckBox_SkipDataCopyFromMySql.IsChecked == false)
-                                {
-                                    SqlBulkCopyOptions options = SqlBulkCopyOptions.Default;
-
-                                    if (KeepIdentityOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.KeepIdentity;
-
-                                    if (CheckConstraintsOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.CheckConstraints;
-
-                                    if (TableLockOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.TableLock;
-
-                                    if (KeepNullsOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.KeepNulls;
-
-                                    if (FireTriggersOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.FireTriggers;
-
-                                    if (AllowEncryptedValueModificationsOption.IsChecked == true)
-                                        options |= SqlBulkCopyOptions.AllowEncryptedValueModifications;
-
-                                    using (SqlBulkCopy bulkCopy = new SqlBulkCopy(targetConn, options, null))
-                                    {
-                                        bulkCopy.DestinationTableName = targetTable;
-                                        bulkCopy.BatchSize = 10000;
-                                        bulkCopy.NotifyAfter = 10000;
-
-                                        bulkCopy.SqlRowsCopied += async (s, args) =>
-                                        {
-                                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
-                                            TimeSpan elapsed = stopwatch.Elapsed;
-                                            Label_CopyProgressFromMySql.Content = $"Rows copied: {args.RowsCopied:#,0} in {(int)elapsed.TotalSeconds:#,0} sec.";
-                                        };
-
-                                        foreach (DataRow schemaRow in schemaTable.Rows)
-                                        {
-                                            string columnName = schemaRow["ColumnName"].ToString();
-                                            bulkCopy.ColumnMappings.Add(columnName, columnName);
-                                        }
-
-                                        await bulkCopy.WriteToServerAsync(reader, cancellationToken);
-
-                                        long totalRowsCopied = SqlBulkCopyHelper.GetRowsCopied(bulkCopy);
-                                        TimeSpan ts = stopwatch.Elapsed;
-                                        Label_CopyProgressFromMySql.Content = $"Completed | Total rows copied: {totalRowsCopied:#,0} in {(int)ts.TotalSeconds:#,0} sec.";
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                LocalizedMessageBox.Show("Data transfer has been cancelled.", "DataTransferWindow");
-            }
-            catch (Exception ex)
-            {
-                LocalizedMessageBox.Show($"Something went wrong: {ex.Message}", "DataTransferWindow");
-            }
-            finally
-            {
-                ButtonFromMySql_CopyData.Visibility = System.Windows.Visibility.Visible;
-                ButtonFromMySql_Cancel.Visibility = System.Windows.Visibility.Collapsed;
-                stopwatch.Stop();
-            }
+            cancellation?.Cancel();
+            Label_CopyProgress.Text = "Cancelling...";
         }
 
-        private void ButtonFromMySql_Cancel_Click(object sender, RoutedEventArgs e)
+        private void SetBusy(bool busy)
         {
-            _cancellationTokenSource.Cancel();
+            Button_SelectSource.IsEnabled = !busy;
+            Button_SelectTarget.IsEnabled = !busy;
+            TextBox_TargetTable.IsEnabled = !busy;
+            Button_CopyData.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
+            Button_Cancel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+            UpdateAvailability();
         }
     }
 }

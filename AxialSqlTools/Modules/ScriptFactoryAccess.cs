@@ -20,12 +20,17 @@ namespace AxialSqlTools
 {
     public static class ScriptFactoryAccess
     {
+        private static ConnectionInfo lastKnownEditorConnection;
+
         public class ConnectionInfo
         {          
             public string FullConnectionString { get; set; }
             public string Database { get; set; }            
             public string ServerName { get; set; }            
             public UIConnectionInfo ActiveConnectionInfo { get; set; }
+            internal string AccessToken { get; set; }
+            internal Func<SqlAuthenticationParameters, System.Threading.CancellationToken, Task<SqlAuthenticationToken>> AccessTokenCallback { get; set; }
+            internal SqlCredential Credential { get; set; }
 
             public string DisplayName
             {
@@ -36,6 +41,39 @@ namespace AxialSqlTools
             }
 
             public override string ToString() => DisplayName;
+
+            internal SqlConnection CreateSqlConnection(string database = null, bool? trustServerCertificate = null)
+            {
+                var builder = new SqlConnectionStringBuilder(FullConnectionString ?? string.Empty);
+                if (!string.IsNullOrWhiteSpace(database))
+                    builder.InitialCatalog = database;
+                if (trustServerCertificate.HasValue)
+                    builder.TrustServerCertificate = trustServerCertificate.Value;
+
+                // SSMS can authenticate the editor with an access token/callback or a
+                // SqlCredential. These values are not exposed in ConnectionString, so
+                // carry them across to the background metadata connection explicitly.
+                bool hasTokenCallback = AccessTokenCallback != null;
+                bool hasAccessToken = !hasTokenCallback && !string.IsNullOrWhiteSpace(AccessToken);
+                bool hasCredential = !hasTokenCallback && !hasAccessToken && Credential != null;
+                if (hasTokenCallback || hasAccessToken || hasCredential)
+                {
+                    builder.Remove("Authentication");
+                    builder.Remove("Integrated Security");
+                    builder.Remove("User ID");
+                    builder.Remove("Password");
+                }
+
+                var connection = new SqlConnection(builder.ConnectionString);
+                if (hasTokenCallback)
+                    connection.AccessTokenCallback = AccessTokenCallback;
+                else if (hasAccessToken)
+                    connection.AccessToken = AccessToken;
+                else if (hasCredential)
+                    connection.Credential = Credential;
+
+                return connection;
+            }
         }
 
         private static INodeInformation GetSelectedNode(IObjectExplorerService _objectExplorerService)
@@ -109,9 +147,10 @@ namespace AxialSqlTools
             UIConnectionInfo connection = connInfo.UIConnectionInfo;
             if (connection == null) return null;
 
-            string liveServer;
-            string liveDatabase;
-            TryGetActiveEditorServerAndDatabase(out liveServer, out liveDatabase);
+            SqlConnection liveConnection;
+            TryGetActiveEditorConnection(out liveConnection);
+            string liveServer = TryGet(() => liveConnection?.DataSource);
+            string liveDatabase = TryGet(() => liveConnection?.Database);
 
             string databaseName = inMaster ? "master" : liveDatabase;
             if (string.IsNullOrWhiteSpace(databaseName))
@@ -119,38 +158,74 @@ namespace AxialSqlTools
             if (string.IsNullOrWhiteSpace(databaseName))
                 databaseName = "master";
 
-            var builder = new SqlConnectionStringBuilder
+            SqlConnectionStringBuilder builder = TryCreateConnectionStringBuilder(liveConnection);
+            if (builder == null)
             {
-                DataSource = string.IsNullOrWhiteSpace(liveServer) ? connection.ServerName : liveServer,
-                InitialCatalog = databaseName,
-                ApplicationName = "Axial SQL Tools"
-            };
+                builder = new SqlConnectionStringBuilder();
+                string auth = GetAuthenticationMode(connection);
+                ApplyAuthentication(builder, connection.UserName, connection.Password, auth);
 
-            string auth = GetAuthenticationMode(connection);
+                if (IsTrue(GetAdvancedOption(connection, "ENCRYPT_CONNECTION")))
+                    builder.Encrypt = true;
 
-            ApplyAuthentication(builder, connection.UserName, connection.Password, auth);
+                if (IsTrue(GetAdvancedOption(connection, "TRUST_SERVER_CERTIFICATE")))
+                    builder.TrustServerCertificate = true;
+            }
+            else if (!builder.IntegratedSecurity && !string.IsNullOrWhiteSpace(connection.Password))
+            {
+                // An open SqlConnection hides its password unless Persist Security
+                // Info is enabled. UIConnectionInfo still owns the credential SSMS
+                // used, so restore it without discarding the live transport options.
+                if (!string.IsNullOrWhiteSpace(connection.UserName))
+                    builder.UserID = connection.UserName;
+                builder.Password = connection.Password;
+            }
 
-            if (IsTrue(GetAdvancedOption(connection, "ENCRYPT_CONNECTION")))
-                builder.Encrypt = true;
-
-            if (IsTrue(GetAdvancedOption(connection, "TRUST_SERVER_CERTIFICATE")))
-                builder.TrustServerCertificate = true;
+            builder.DataSource = string.IsNullOrWhiteSpace(liveServer) ? connection.ServerName : liveServer;
+            builder.InitialCatalog = databaseName;
+            builder.ApplicationName = "Axial SQL Tools";
 
             var ci = new ConnectionInfo
             {
                 FullConnectionString = builder.ToString(),
                 Database = databaseName,
                 ServerName = builder.DataSource,
-                ActiveConnectionInfo = connection
+                ActiveConnectionInfo = connection,
+                AccessToken = TryGet(() => liveConnection?.AccessToken),
+                AccessTokenCallback = TryGet(() => liveConnection?.AccessTokenCallback),
+                Credential = TryGet(() => liveConnection?.Credential)
             };
 
+            lastKnownEditorConnection = ci;
             return ci;
         }
 
-        private static bool TryGetActiveEditorServerAndDatabase(out string server, out string database)
+        public static ConnectionInfo GetCurrentOrLastConnectionInfo(bool inMaster = false)
         {
-            server = null;
-            database = null;
+            ConnectionInfo current = GetCurrentConnectionInfo(inMaster);
+            if (current != null)
+                return current;
+
+            ConnectionInfo last = lastKnownEditorConnection;
+            if (last == null || !inMaster || string.Equals(last.Database, "master", StringComparison.OrdinalIgnoreCase))
+                return last;
+
+            var builder = new SqlConnectionStringBuilder(last.FullConnectionString) { InitialCatalog = "master" };
+            return new ConnectionInfo
+            {
+                FullConnectionString = builder.ConnectionString,
+                Database = "master",
+                ServerName = last.ServerName,
+                ActiveConnectionInfo = last.ActiveConnectionInfo,
+                AccessToken = last.AccessToken,
+                AccessTokenCallback = last.AccessTokenCallback,
+                Credential = last.Credential
+            };
+        }
+
+        private static bool TryGetActiveEditorConnection(out SqlConnection connection)
+        {
+            connection = null;
             try
             {
                 object factory = ServiceCache.ScriptFactory;
@@ -159,19 +234,47 @@ namespace AxialSqlTools
                 if (method == null) return false;
                 object docView = method.Invoke(factory, new object[] { ServiceCache.VSMonitorSelection, false, null });
                 object liveConnection = GridAccess.GetNonPublicField(docView, "m_connection");
-                if (liveConnection == null)
+                connection = liveConnection as SqlConnection;
+                if (connection == null)
                 {
                     object results = GridAccess.GetNonPublicField(docView, "m_sqlResultsControl");
                     object execution = GridAccess.GetNonPublicField(results, "m_sqlExec");
                     liveConnection = GridAccess.GetNonPublicField(execution, "m_conn");
+                    connection = liveConnection as SqlConnection;
                 }
-                server = GridAccess.GetProperty(liveConnection, "DataSource") as string;
-                database = GridAccess.GetProperty(liveConnection, "Database") as string;
-                return !string.IsNullOrWhiteSpace(database) || !string.IsNullOrWhiteSpace(server);
+                return connection != null;
             }
             catch
             {
                 return false;
+            }
+        }
+
+        private static SqlConnectionStringBuilder TryCreateConnectionStringBuilder(SqlConnection connection)
+        {
+            string value = TryGet(() => connection?.ConnectionString);
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            try
+            {
+                return new SqlConnectionStringBuilder(value);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static T TryGet<T>(Func<T> getter)
+        {
+            try
+            {
+                return getter == null ? default(T) : getter();
+            }
+            catch
+            {
+                return default(T);
             }
         }
 

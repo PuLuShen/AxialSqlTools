@@ -39,35 +39,8 @@ namespace Aurora
             try
             {
 
-                if (System.IO.File.Exists(FullFileName))
-                {
-                    string fileContent = System.IO.File.ReadAllText(FullFileName);
-
-                    DTE dte = Package.GetGlobalService(typeof(DTE)) as DTE;
-
-                    bool isShiftPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
-
-                    if (isShiftPressed || dte?.ActiveDocument == null) {
-                        ServiceCache.ScriptFactory.CreateNewBlankScript(ScriptType.Sql);
-                    }
-
-                    if (dte?.ActiveDocument != null)
-                    {
-                        TextSelection selection = dte.ActiveDocument.Selection as TextSelection;
-                        selection.Delete();
-                        selection.Insert(fileContent.Trim());
-                    }
-                }
-                else
-                {
-                    VsShellUtilities.ShowMessageBox(
-                        this.package,
-                        "File " + FullFileName + " doesn't exist!",
-                        "Error",
-                        OLEMSGICON.OLEMSGICON_WARNING,
-                        OLEMSGBUTTON.OLEMSGBUTTON_OK,
-                        OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
-                }
+                bool isShiftPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
+                QueryTemplateInsertionService.InsertFile(FullFileName, isShiftPressed);
             }
             catch (Exception ex)
             {

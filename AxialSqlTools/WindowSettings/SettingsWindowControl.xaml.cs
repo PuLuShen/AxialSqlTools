@@ -7,6 +7,7 @@ namespace AxialSqlTools
     using System.Diagnostics.CodeAnalysis;
     using System.IO;
     using System.IO.Compression;
+    using System.Linq;
     using System.Net.Http;
     using System.Text;
     using System.Threading;
@@ -158,8 +159,16 @@ as select 1;
                 var completionSettings = SettingsManager.GetSqlCompletionSettings();
                 UseSqlCompletion.IsChecked = completionSettings.enabled;
                 AutomaticSqlCompletion.IsChecked = completionSettings.automaticPopup;
+                CompletionTrustServerCertificate.IsChecked = completionSettings.trustServerCertificate;
                 CompletionSquareBrackets.IsChecked = completionSettings.useSquareBrackets;
                 CompletionUsageLearning.IsChecked = completionSettings.learnFromUsage;
+                CompletionAutoRefreshMetadata.IsChecked = completionSettings.autoRefreshMetadata;
+                CompletionShowObjectDetails.IsChecked = completionSettings.showObjectDetails;
+                CompletionColumnPicker.IsChecked = completionSettings.enableColumnPicker;
+                CompletionAutoAliases.IsChecked = completionSettings.autoAddAliases;
+                CompletionAliasPrefixes.Text = completionSettings.aliasPrefixToIgnore;
+                CompletionCustomAliases.Text = completionSettings.customAliases;
+                CompletionJoinRules.Text = completionSettings.joinColumnRules;
                 CompletionDelay.Text = completionSettings.delayMilliseconds.ToString();
                 CompletionMaximumItems.Text = completionSettings.maximumItems.ToString();
 
@@ -168,6 +177,8 @@ as select 1;
                 QueryHistoryTextFilesInfo.Text = SettingsManager.GetQueryHistoryTextFileFolder();
                 SelectQueryHistoryStorageType(SettingsManager.GetQueryHistoryStorageMode());
                 SelectQueryHistoryShortcut(SettingsManager.GetQueryHistoryShortcut());
+                QueryHistoryRetentionDays.Text = SettingsManager.GetQueryHistoryRetentionDays().ToString();
+                QueryHistoryRedactSensitiveText.IsChecked = SettingsManager.GetQueryHistoryRedactSensitiveText();
                 UpdateQueryHistoryStorageControls();
                 UpdateQueryHistoryConnectionDetails();
 
@@ -269,8 +280,13 @@ as select 1;
 
         private void Button_SaveScriptFolder_Click(object sender, RoutedEventArgs e)
         {
-            SettingsManager.SaveTemplatesFolder(ScriptFolder.Text);
+            if (!QueryTemplateLibrary.Instance.TrySetRoot(ScriptFolder.Text, true, out string error))
+            {
+                LocalizedMessageBox.Show(error, "Query Templates", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
 
+            ScriptFolder.Text = QueryTemplateLibrary.Instance.RootFolder;
             SavedMessage();
         }
 
@@ -290,14 +306,42 @@ as select 1;
                 triggerKey = GetSelectedAsteriskExpansionTriggerKey()
             });
 
+            SavedMessage();
+        }
+
+        private void Button_SaveSqlCompletion_Click(object sender, RoutedEventArgs e)
+        {
+            if (!int.TryParse(CompletionDelay.Text, out int delay) || delay < 0 || delay > 1000
+                || !int.TryParse(CompletionMaximumItems.Text, out int maximumItems) || maximumItems < 20 || maximumItems > 1000)
+            {
+                LocalizedMessageBox.Show("Popup delay must be between 0 and 1000 ms, and maximum matches between 20 and 1000.",
+                    "SQL Completion", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             var completionSettings = SettingsManager.GetSqlCompletionSettings();
             completionSettings.enabled = UseSqlCompletion.IsChecked.GetValueOrDefault();
             completionSettings.automaticPopup = AutomaticSqlCompletion.IsChecked.GetValueOrDefault();
+            completionSettings.trustServerCertificate = CompletionTrustServerCertificate.IsChecked.GetValueOrDefault();
             completionSettings.useSquareBrackets = CompletionSquareBrackets.IsChecked.GetValueOrDefault();
             completionSettings.learnFromUsage = CompletionUsageLearning.IsChecked.GetValueOrDefault();
-            if (int.TryParse(CompletionDelay.Text, out int delay)) completionSettings.delayMilliseconds = delay;
-            if (int.TryParse(CompletionMaximumItems.Text, out int maximumItems)) completionSettings.maximumItems = maximumItems;
-            SettingsManager.SaveSqlCompletionSettings(completionSettings);
+            completionSettings.autoRefreshMetadata = CompletionAutoRefreshMetadata.IsChecked.GetValueOrDefault();
+            completionSettings.showObjectDetails = CompletionShowObjectDetails.IsChecked.GetValueOrDefault();
+            completionSettings.enableColumnPicker = CompletionColumnPicker.IsChecked.GetValueOrDefault();
+            completionSettings.autoAddAliases = CompletionAutoAliases.IsChecked.GetValueOrDefault();
+            completionSettings.aliasPrefixToIgnore = CompletionAliasPrefixes.Text ?? string.Empty;
+            completionSettings.customAliases = CompletionCustomAliases.Text ?? string.Empty;
+            completionSettings.joinColumnRules = CompletionJoinRules.Text ?? string.Empty;
+            completionSettings.delayMilliseconds = delay;
+            completionSettings.maximumItems = maximumItems;
+            if (!SettingsManager.SaveSqlCompletionSettings(completionSettings))
+            {
+                LocalizedMessageBox.Show("The SQL completion setting could not be saved.",
+                    "SQL Completion", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            Completion.SqlMetadataCache.InvalidateAll();
 
             SavedMessage();
         }
@@ -307,16 +351,19 @@ as select 1;
             string repoUrl = "https://github.com/Axial-SQL/AxialSqlTools/archive/main.zip";
             string targetFolderPath = "AxialSqlTools-main/query-library"; // Relative path inside the zip
             string targetPath = SettingsManager.GetTemplatesFolder();
+            string tempZipPath = null;
 
             try
             {
                 // Download the repo zip
-                string tempZipPath = DownloadGitHubRepoZip(repoUrl);
+                tempZipPath = DownloadGitHubRepoZip(repoUrl);
 
                 // Extract the specific folder from the zip
-                ExtractSpecificFolderFromZip(tempZipPath, targetFolderPath, targetPath);
+                ExtractSpecificFolderFromZip(tempZipPath, targetFolderPath, targetPath, out int added, out int skipped);
 
-                LocalizedMessageBox.Show("Axial SQL Tool Query Library has been downloaded", "Done");
+                QueryTemplateLibrary.Instance.Refresh();
+
+                LocalizedMessageBox.Show($"Axial SQL Tool Query Library has been downloaded. Added: {added}; existing files kept: {skipped}.", "Done");
 
             }
             catch (Exception ex)
@@ -324,6 +371,14 @@ as select 1;
                 LocalizedMessageBox.Show(
                     string.Format(System.Globalization.CultureInfo.CurrentUICulture, "An error occurred: '{0}'", ex.Message),
                     "Error");
+            }
+            finally
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(tempZipPath) && File.Exists(tempZipPath)) File.Delete(tempZipPath);
+                }
+                catch { }
             }
 
         }
@@ -359,22 +414,33 @@ as select 1;
                 client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
                 client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US,en;q=0.5");
 
-                string tempPath = Path.GetTempFileName() + ".zip";
+                string tempPath = Path.Combine(Path.GetTempPath(), "AxialSqlTools-query-library-" + Guid.NewGuid().ToString("N") + ".zip");
                 byte[] data = client.GetByteArrayAsync(url).GetAwaiter().GetResult();
                 File.WriteAllBytes(tempPath, data);
                 return tempPath;
             }
         }
 
-        static void ExtractSpecificFolderFromZip(string zipPath, string folderPath, string destinationPath)
+        static void ExtractSpecificFolderFromZip(string zipPath, string folderPath, string destinationPath, out int added, out int skipped)
         {
+            added = 0;
+            skipped = 0;
+            string destinationRoot = Path.GetFullPath(destinationPath);
+            if (!destinationRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+                destinationRoot += Path.DirectorySeparatorChar;
+
             using (ZipArchive archive = ZipFile.OpenRead(zipPath))
             {
                 foreach (ZipArchiveEntry entry in archive.Entries)
                 {
-                    if (entry.FullName.StartsWith(folderPath, StringComparison.OrdinalIgnoreCase))
+                    string prefix = folderPath.TrimEnd('/') + "/";
+                    if (entry.FullName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                     {
-                        string path = Path.Combine(destinationPath, entry.FullName.Substring(folderPath.Length + 1));
+                        string relativePath = entry.FullName.Substring(prefix.Length).Replace('/', Path.DirectorySeparatorChar);
+                        if (string.IsNullOrWhiteSpace(relativePath)) continue;
+                        string path = Path.GetFullPath(Path.Combine(destinationRoot, relativePath));
+                        if (!path.StartsWith(destinationRoot, StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException("The downloaded archive contains an invalid path.");
 
                         // Create subdirectory structure in destination, if needed
                         if (entry.FullName.EndsWith("/"))
@@ -385,18 +451,17 @@ as select 1;
                         {
                             // Ensure directory exists
                             Directory.CreateDirectory(Path.GetDirectoryName(path));
-                            // Check if file exists to avoid IOException
                             if (File.Exists(path))
                             {
-                                File.Delete(path); // Delete the file if it exists.
+                                skipped++;
+                                continue;
                             }
-                            entry.ExtractToFile(path, true);
+                            entry.ExtractToFile(path, false);
+                            added++;
                         }
                     }
                 }
             }
-            // Delete the temporary zip file after extraction
-            File.Delete(zipPath);
         }
 
         private void SavedMessage()
@@ -594,6 +659,9 @@ as select 1;
             SettingsManager.SaveQueryHistoryConnectionString(_queryHistoryConnectionString);
             SettingsManager.SaveQueryHistoryTableName(QueryHistoryTableName.Text);
             SettingsManager.SaveQueryHistoryStorageMode(GetSelectedQueryHistoryStorageType());
+            if (int.TryParse(QueryHistoryRetentionDays.Text, out int retentionDays))
+                SettingsManager.SaveQueryHistoryRetentionDays(retentionDays);
+            SettingsManager.SaveQueryHistoryRedactSensitiveText(QueryHistoryRedactSensitiveText.IsChecked.GetValueOrDefault());
             string shortcut = QueryHistoryShortcut.SelectedValue?.ToString() ?? string.Empty;
             SettingsManager.SaveQueryHistoryShortcut(shortcut);
             if (!ShortcutManager.ApplyQueryHistoryShortcut(shortcut, out string shortcutError))
@@ -617,6 +685,58 @@ as select 1;
 
             UpdateQueryHistoryConnectionDetails();
 
+        }
+
+        private async void Button_RefreshCompletionMetadata_Click(object sender, RoutedEventArgs e)
+        {
+            var button = sender as Button;
+            if (button != null) button.IsEnabled = false;
+            try
+            {
+                var connection = ScriptFactoryAccess.GetCurrentOrLastConnectionInfo();
+                if (connection == null || string.IsNullOrWhiteSpace(connection.FullConnectionString))
+                    throw new InvalidOperationException("Open a connected SQL editor before refreshing metadata.");
+                var snapshot = await Completion.SqlMetadataCache.RefreshAsync(connection, System.Threading.CancellationToken.None);
+                string detail = snapshot.StatusText + Environment.NewLine
+                    + $"Objects: {snapshot.Objects.Count}; procedures: {snapshot.Objects.Count(x => x.Kind == Completion.CompletionItemKind.Procedure)}; tables/views: {snapshot.Objects.Count(x => x.Kind == Completion.CompletionItemKind.Table || x.Kind == Completion.CompletionItemKind.View)}";
+                if (!string.IsNullOrWhiteSpace(snapshot.ErrorMessage)) detail += Environment.NewLine + snapshot.ErrorMessage;
+                CompletionMetadataStatus.Text = detail;
+                LocalizedMessageBox.Show(detail, "SQL Completion Metadata");
+            }
+            catch (Exception ex)
+            {
+                FeatureDiagnostics.Report("SQL Completion Metadata", "Manual refresh failed", ex);
+                CompletionMetadataStatus.Text = "Refresh failed: " + UnwrapExceptionMessage(ex);
+                LocalizedMessageBox.Show("Refresh failed: " + UnwrapExceptionMessage(ex), "SQL Completion Metadata");
+            }
+            finally { if (button != null) button.IsEnabled = true; }
+        }
+
+        private static string UnwrapExceptionMessage(Exception exception)
+        {
+            Exception current = exception;
+            while (current?.InnerException != null) current = current.InnerException;
+            return current?.Message ?? string.Empty;
+        }
+
+        private void Button_RefreshDiagnostics_Click(object sender, RoutedEventArgs e) => RefreshDiagnostics();
+
+        private void Button_CopyDiagnostics_Click(object sender, RoutedEventArgs e)
+        {
+            RefreshDiagnostics();
+            if (!string.IsNullOrWhiteSpace(DiagnosticsText.Text)) Clipboard.SetText(DiagnosticsText.Text);
+        }
+
+        private void RefreshDiagnostics()
+        {
+            var report = new StringBuilder();
+            report.AppendLine("Axial SQL Tools diagnostics");
+            report.AppendLine("Assembly: " + typeof(SettingsWindowControl).Assembly.GetName().Version);
+            var connection = ScriptFactoryAccess.GetCurrentOrLastConnectionInfo();
+            report.AppendLine("Connection: " + (connection?.DisplayName ?? "<none>"));
+            foreach (FeatureDiagnostic item in FeatureDiagnostics.Snapshot())
+                report.AppendLine($"{item.TimestampUtc:u} [{item.Feature}] {item.Message}{(item.Exception == null ? string.Empty : " | " + item.Exception.Message)}");
+            DiagnosticsText.Text = report.ToString();
         }
 
         private void SelectQueryHistoryShortcut(string shortcut)
@@ -1174,8 +1294,6 @@ END
                 return;
             }
 
-            GridAccess.ColorAllDocumentTabs();
-            GridAccess.ScheduleReapplyAllTabColors();
             SetConnectionColorRulesDirty(false);
             SavedMessage();
         }

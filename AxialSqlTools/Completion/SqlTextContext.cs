@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.SqlServer.TransactSql.ScriptDom;
 
 namespace AxialSqlTools.Completion
 {
@@ -19,7 +23,7 @@ namespace AxialSqlTools.Completion
 
             string batch = source.Substring(Math.Min(batchStart, source.Length));
             string maskedBatch = masked.Substring(Math.Min(batchStart, masked.Length));
-            int statementStart = FindStatementStart(maskedBatch);
+            int statementStart = FindStatementStart(batch, maskedBatch);
             return new SqlTextContext
             {
                 BatchText = batch,
@@ -27,15 +31,71 @@ namespace AxialSqlTools.Completion
             };
         }
 
-        private static int FindStatementStart(string sql)
+        private static int FindStatementStart(string source, string masked)
         {
             int depth = 0;
             int start = 0;
-            for (int i = 0; i < sql.Length; i++)
+            for (int i = 0; i < masked.Length; i++)
             {
-                if (sql[i] == '(') depth++;
-                else if (sql[i] == ')') depth = Math.Max(0, depth - 1);
-                else if (sql[i] == ';' && depth == 0) start = i + 1;
+                if (masked[i] == '(') depth++;
+                else if (masked[i] == ')') depth = Math.Max(0, depth - 1);
+                else if (masked[i] == ';' && depth == 0) start = i + 1;
+            }
+
+            // ScriptDom provides the authoritative top-level statement boundary.
+            // It can separate normal T-SQL statements even when semicolons are
+            // omitted, which is essential after expanding a multi-line snippet.
+            try
+            {
+                var parser = new TSql170Parser(true);
+                TSqlFragment fragment = parser.Parse(new StringReader(source ?? string.Empty), out IList<ParseError> _);
+                var script = fragment as TSqlScript;
+                TSqlStatement parsed = script?.Batches.SelectMany(b => b.Statements)
+                    .Where(s => s.StartOffset <= (source ?? string.Empty).Length)
+                    .OrderBy(s => s.StartOffset)
+                    .LastOrDefault();
+                if (parsed != null) start = Math.Max(start, parsed.StartOffset);
+            }
+            catch { }
+
+            // EXEC accepts a free-form argument tail, so an incomplete parse can
+            // otherwise absorb a following snippet when both start on one line:
+            // "EXEC dbo.p @x=NULL  SELECT * ...". Strings/comments are already
+            // masked, and procedure argument expressions cannot contain a
+            // top-level statement, so a later starter safely begins a new scope.
+            int executeStart = start;
+            string executeTail = (masked ?? string.Empty).Substring(Math.Min(executeStart, (masked ?? string.Empty).Length));
+            if (Regex.IsMatch(executeTail, @"^\s*EXEC(?:UTE)?\b", RegexOptions.IgnoreCase))
+            {
+                foreach (Match match in Regex.Matches(executeTail,
+                    @"(?i)(?<=[\s;,])(?<keyword>EXEC(?:UTE)?|SELECT|INSERT|UPDATE|DELETE|MERGE|DECLARE|SET|CREATE|ALTER|DROP|TRUNCATE|USE|PRINT|IF|WHILE|BEGIN|DBCC)\b"))
+                {
+                    int candidate = executeStart + match.Groups["keyword"].Index;
+                    if (candidate <= executeStart) continue;
+                    int currentDepth = 0;
+                    for (int i = executeStart; i < candidate; i++)
+                    {
+                        if (masked[i] == '(') currentDepth++;
+                        else if (masked[i] == ')') currentDepth = Math.Max(0, currentDepth - 1);
+                    }
+                    if (currentDepth == 0) start = candidate;
+                }
+            }
+
+            // An incomplete trailing statement may be omitted from ScriptDom's AST.
+            // Recover only top-level, line-leading starters after the last parsed
+            // statement; parentheses prevent subqueries from being mistaken for a
+            // new batch statement.
+            foreach (Match match in Regex.Matches(masked ?? string.Empty,
+                @"(?im)^[ \t]*(?:EXEC(?:UTE)?|SELECT|INSERT|UPDATE|DELETE|MERGE|DECLARE|SET|CREATE|ALTER|DROP|TRUNCATE|USE|PRINT|IF|WHILE|BEGIN|DBCC)\b"))
+            {
+                int currentDepth = 0;
+                for (int i = start; i < match.Index; i++)
+                {
+                    if (masked[i] == '(') currentDepth++;
+                    else if (masked[i] == ')') currentDepth = Math.Max(0, currentDepth - 1);
+                }
+                if (match.Index > start && currentDepth == 0) start = match.Index;
             }
             return start;
         }
@@ -44,7 +104,7 @@ namespace AxialSqlTools.Completion
         {
             if (string.IsNullOrEmpty(sql)) return string.Empty;
             var output = new StringBuilder(sql);
-            bool lineComment = false, blockComment = false, quoted = false;
+            bool lineComment = false, blockComment = false, quoted = false, doubleQuoted = false, bracketed = false;
             for (int i = 0; i < sql.Length; i++)
             {
                 char c = sql[i];
@@ -64,11 +124,63 @@ namespace AxialSqlTools.Completion
                     if (c == '\'' && next == '\'') { output[i + 1] = ' '; i++; }
                     else if (c == '\'') quoted = false;
                 }
+                else if (doubleQuoted)
+                {
+                    if (c == '"' && next == '"') i++;
+                    else if (c == '"') doubleQuoted = false;
+                }
+                else if (bracketed)
+                {
+                    if (c == ']' && next == ']') i++;
+                    else if (c == ']') bracketed = false;
+                }
                 else if (c == '-' && next == '-') { output[i] = output[i + 1] = ' '; lineComment = true; i++; }
                 else if (c == '/' && next == '*') { output[i] = output[i + 1] = ' '; blockComment = true; i++; }
                 else if (c == '\'') { output[i] = ' '; quoted = true; }
+                else if (c == '"') doubleQuoted = true;
+                else if (c == '[') bracketed = true;
             }
             return output.ToString();
+        }
+
+        public static bool IsInsideCommentOrString(string sql, int offset)
+        {
+            string value = sql ?? string.Empty;
+            int limit = Math.Max(0, Math.Min(offset, value.Length));
+            bool lineComment = false, blockComment = false, quoted = false, doubleQuoted = false, bracketed = false;
+            for (int i = 0; i < limit; i++)
+            {
+                char c = value[i], next = i + 1 < limit ? value[i + 1] : '\0';
+                if (lineComment)
+                {
+                    if (c == '\r' || c == '\n') lineComment = false;
+                }
+                else if (blockComment)
+                {
+                    if (c == '*' && next == '/') { blockComment = false; i++; }
+                }
+                else if (quoted)
+                {
+                    if (c == '\'' && next == '\'') i++;
+                    else if (c == '\'') quoted = false;
+                }
+                else if (doubleQuoted)
+                {
+                    if (c == '"' && next == '"') i++;
+                    else if (c == '"') doubleQuoted = false;
+                }
+                else if (bracketed)
+                {
+                    if (c == ']' && next == ']') i++;
+                    else if (c == ']') bracketed = false;
+                }
+                else if (c == '-' && next == '-') { lineComment = true; i++; }
+                else if (c == '/' && next == '*') { blockComment = true; i++; }
+                else if (c == '\'') quoted = true;
+                else if (c == '"') doubleQuoted = true;
+                else if (c == '[') bracketed = true;
+            }
+            return lineComment || blockComment || quoted || doubleQuoted || bracketed;
         }
     }
 }

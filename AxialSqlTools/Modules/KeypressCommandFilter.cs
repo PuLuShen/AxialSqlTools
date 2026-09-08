@@ -5,18 +5,30 @@ using System;
 using System.Runtime.InteropServices;
 using System.Windows.Input;
 using AxialSqlTools.Completion;
+using System.Collections.Concurrent;
+using Microsoft.VisualStudio.Shell;
+using System.Threading.Tasks;
+using System.Threading;
+using System.Windows.Forms;
 
 namespace AxialSqlTools
 {
     public class KeypressCommandFilter : IOleCommandTarget, IDisposable
     {
+        private sealed class NavigationLocation { public IVsTextView View; public int Line; public int Column; }
+        private static readonly ConcurrentStack<NavigationLocation> NavigationHistory = new ConcurrentStack<NavigationLocation>();
         private IOleCommandTarget nextCommandTarget;
         private IVsTextView textView;
+        private readonly AxialSqlToolsPackage package;
         private readonly CompletionController completionController;
+        private CancellationTokenSource navigationCancellation;
+        private bool f12KeyboardHookRegistered;
         public KeypressCommandFilter(AxialSqlToolsPackage package, IVsTextView textView)
         {
+            this.package = package;
             this.textView = textView;
             completionController = new CompletionController(textView);
+            completionController.BeforePopupShown += DismissNativeCompletion;
         }
 
         public void AddToChain()
@@ -26,10 +38,32 @@ namespace AxialSqlTools
             {
                 throw new Exception("Failed to add command filter");
             }
+
+            // SSMS 22 consumes its built-in F12 binding before editor command
+            // filters and before its UI-thread keyboard hook. Register this view
+            // with one process-wide low-level hook, which runs before accelerator
+            // translation and is then restricted back to the focused SQL editor.
+            f12KeyboardHookRegistered = F12KeyboardHook.Register(this);
         }
 
         public int Exec(ref Guid cmdGroup, uint nCmdID, uint nCmdexecopt, IntPtr pvaIn, IntPtr pvaOut)
         {
+            if (cmdGroup == VSConstants.GUID_VSStandardCommandSet97
+                && (nCmdID == (uint)VSConstants.VSStd97CmdID.Paste
+                    || nCmdID == (uint)VSConstants.VSStd97CmdID.Cut
+                    || nCmdID == (uint)VSConstants.VSStd97CmdID.Undo
+                    || nCmdID == (uint)VSConstants.VSStd97CmdID.Redo))
+            {
+                int editResult = nextCommandTarget?.Exec(ref cmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut) ?? VSConstants.S_OK;
+                completionController.Request(false);
+                return editResult;
+            }
+            if (cmdGroup == VSConstants.GUID_VSStandardCommandSet97 && nCmdID == (uint)VSConstants.VSStd97CmdID.ShellNavBackward && TryNavigateBack())
+                return VSConstants.S_OK;
+            if (IsGoToDefinitionCommand(cmdGroup, nCmdID))
+            {
+                if (BeginGoToDefinition()) return VSConstants.S_OK;
+            }
             if (cmdGroup == VSConstants.VSStd2K)
             {
                 if (ShouldProcessAsteriskExpansionKey(nCmdID) && AsteriskExpansionService.TryExpand(textView))
@@ -49,6 +83,21 @@ namespace AxialSqlTools
                     && completionController.TryAdvanceSnippet((Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift))
                     return VSConstants.S_OK;
 
+                // Ctrl+Space is also a configurable snippet expansion key. Give an
+                // exact snippet match first refusal, then fall back to completion.
+                var snippetSettings = SettingsManager.GetSnippetSettings();
+                bool explicitCompletionCommand = nCmdID == (uint)VSConstants.VSStd2KCmdID.COMPLETEWORD
+                    || nCmdID == (uint)VSConstants.VSStd2KCmdID.SHOWMEMBERLIST;
+                if (ShouldPreferSnippetOverCompletion(snippetSettings.useSnippets, snippetSettings.replaceKey, explicitCompletionCommand,
+                        (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+                    && TryReplaceSnippet())
+                {
+                    // Ctrl+Space remains an explicit completion request after the
+                    // snippet expands, even when automatic popups are disabled.
+                    completionController.Request(true);
+                    return VSConstants.S_OK;
+                }
+
                 if (nCmdID == (uint)VSConstants.VSStd2KCmdID.COMPLETEWORD || nCmdID == (uint)VSConstants.VSStd2KCmdID.SHOWMEMBERLIST)
                 {
                     completionController.Request(true);
@@ -63,6 +112,13 @@ namespace AxialSqlTools
                     completionController.Request(false);
                     return result;
                 }
+
+                if (nCmdID == (uint)VSConstants.VSStd2KCmdID.DELETE
+                    || nCmdID == (uint)VSConstants.VSStd2KCmdID.LEFT
+                    || nCmdID == (uint)VSConstants.VSStd2KCmdID.RIGHT)
+                {
+                    completionController.Dismiss();
+                }
             }
 
             if (cmdGroup == VSConstants.VSStd2K && IsSupportedKey(nCmdID))
@@ -70,6 +126,7 @@ namespace AxialSqlTools
                 if (ShouldProcessSnippetKey(nCmdID) && TryReplaceSnippet())
                 {
                     // Snippet was replaced — swallow the key so no newline/tab is inserted.
+                    completionController.Request(false);
                     return VSConstants.S_OK;
                 }
 
@@ -178,8 +235,12 @@ namespace AxialSqlTools
             IntPtr pNewText = Marshal.StringToHGlobalUni(newText);
             try
             {
-                TextSpan[] pChangedSpan = new TextSpan[1];
-                textLines.ReplaceLines(iLine, wordStart, iLine, iColumn, pNewText, newText.Length, pChangedSpan);
+                using (var edit = EditorEditTransaction.Begin(textLines, "SQL snippet"))
+                {
+                    TextSpan[] pChangedSpan = new TextSpan[1];
+                    textLines.ReplaceLines(iLine, wordStart, iLine, iColumn, pNewText, newText.Length, pChangedSpan);
+                    edit.Complete();
+                }
             }
             finally
             {
@@ -219,6 +280,21 @@ namespace AxialSqlTools
 
         public int QueryStatus(ref Guid cmdGroup, uint cCmds, OLECMD[] prgCmds, IntPtr pCmdText)
         {
+            if (cmdGroup == VSConstants.GUID_VSStandardCommandSet97)
+            {
+                for (int i = 0; i < prgCmds.Length; i++)
+                {
+                    if (IsGoToDefinitionCommand(cmdGroup, prgCmds[i].cmdID))
+                    {
+                        // SSMS queries command availability before dispatching F12.
+                        // Without advertising support here, Exec is never reached in
+                        // SQL editor windows even though it handles GotoDefn below.
+                        prgCmds[i].cmdf = (uint)(OLECMDF.OLECMDF_ENABLED | OLECMDF.OLECMDF_SUPPORTED);
+                        return VSConstants.S_OK;
+                    }
+                }
+            }
+
             if (cmdGroup == VSConstants.VSStd2K)
             {
                 for (int i = 0; i < prgCmds.Length; i++)
@@ -237,6 +313,180 @@ namespace AxialSqlTools
             return nextCommandTarget?.QueryStatus(ref cmdGroup, cCmds, prgCmds, pCmdText) ?? VSConstants.S_OK;
         }
 
+        internal static bool IsGoToDefinitionCommand(Guid commandGroup, uint commandId)
+            => commandGroup == VSConstants.GUID_VSStandardCommandSet97
+                && commandId == (uint)VSConstants.VSStd97CmdID.GotoDefn;
+
+        internal static bool ShouldPreferSnippetOverCompletion(bool snippetsEnabled,
+            SettingsManager.SnippetReplaceKey replaceKey, bool explicitCompletionCommand, bool controlPressed)
+        {
+            return snippetsEnabled && replaceKey == SettingsManager.SnippetReplaceKey.CtrlSpace && controlPressed
+                && explicitCompletionCommand;
+        }
+
+        private bool BeginGoToDefinition()
+        {
+            try
+            {
+                if (textView.GetBuffer(out IVsTextLines lines) != VSConstants.S_OK) return false;
+                textView.GetCaretPos(out int line, out int column);
+                if (lines.GetLastLineIndex(out int lastLine, out int lastColumn) != VSConstants.S_OK
+                    || lines.GetLineText(0, 0, lastLine, lastColumn, out string text) != VSConstants.S_OK) return false;
+                int offset = ToOffset(text, line, column);
+                ScriptFactoryAccess.ConnectionInfo connection = ScriptFactoryAccess.GetCurrentConnectionInfo();
+                SqlMetadataCache.TryGetCached(connection, out MetadataSnapshot metadata);
+                SqlSymbolResolution resolution = SqlSymbolResolver.Resolve(text, offset, metadata);
+                if (resolution == null)
+                {
+                    AxialSqlToolsPackage._logger?.Info("F12 reached SQL navigation, but no identifier was resolved at the caret.");
+                    return false;
+                }
+                if (resolution.LocalDefinitionOffset >= 0)
+                {
+                    NavigationHistory.Push(new NavigationLocation { View = textView, Line = line, Column = column });
+                    ToLineColumn(text, resolution.LocalDefinitionOffset, out int targetLine, out int targetColumn);
+                    textView.SetCaretPos(targetLine, targetColumn);
+                    string[] symbolParts = (resolution.Symbol ?? string.Empty).Split('.');
+                    string localName = symbolParts[symbolParts.Length - 1].Trim('[', ']');
+                    textView.SetSelection(targetLine, targetColumn, targetLine, targetColumn + localName.Length);
+                    return true;
+                }
+                string objectName = resolution.ObjectName;
+                navigationCancellation?.Cancel();
+                navigationCancellation?.Dispose();
+                navigationCancellation = new CancellationTokenSource();
+                CancellationToken navigationToken = navigationCancellation.Token;
+                var origin = new NavigationLocation { View = textView, Line = line, Column = column };
+                IDisposable statusFeedback = StatusFeedback.Begin(
+                    LocalizationManager.Format("Opening definition script: {0}", objectName));
+                ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                {
+                    try
+                    {
+                        string script = await Task.Run(() => ScriptObjectDefinition.GetText(package, objectName, connection), navigationToken);
+                        navigationToken.ThrowIfCancellationRequested();
+                        if (string.IsNullOrWhiteSpace(script)) return;
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        navigationToken.ThrowIfCancellationRequested();
+                        NavigationHistory.Push(origin);
+                        Microsoft.SqlServer.Management.UI.VSIntegration.ServiceCache.ScriptFactory.CreateNewBlankScript(Microsoft.SqlServer.Management.UI.VSIntegration.Editors.ScriptType.Sql, connection.ActiveConnectionInfo, null);
+                        var document = (EnvDTE.TextDocument)Microsoft.SqlServer.Management.UI.VSIntegration.ServiceCache.ExtensibilityModel.Application.ActiveDocument.Object(null);
+                        document.EndPoint.CreateEditPoint().Insert(script);
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (Exception ex) { FeatureDiagnostics.Report("SQL Navigation", "Asynchronous definition scripting failed", ex); }
+                    finally { statusFeedback.Dispose(); }
+                });
+                return true;
+            }
+            catch (Exception ex)
+            {
+                FeatureDiagnostics.Report("SQL Navigation", "Go to definition could not resolve the identifier", ex);
+                return false;
+            }
+        }
+
+        private static bool TryNavigateBack()
+        {
+            while (NavigationHistory.TryPop(out NavigationLocation location))
+            {
+                try
+                {
+                    if (location.View == null) continue;
+                    IntPtr handle = location.View.GetWindowHandle();
+                    if (handle != IntPtr.Zero) SetFocus(handle);
+                    location.View.SetCaretPos(location.Line, location.Column);
+                    location.View.CenterLines(location.Line, 1);
+                    return true;
+                }
+                catch { }
+            }
+            return false;
+        }
+
+        private static int ToOffset(string text, int line, int column)
+        {
+            int offset = 0;
+            for (int current = 0; current < line && offset < text.Length; current++)
+            {
+                int newline = text.IndexOf('\n', offset);
+                if (newline < 0) return text.Length;
+                offset = newline + 1;
+            }
+            return Math.Min(text.Length, offset + column);
+        }
+
+        private static void ToLineColumn(string text, int offset, out int line, out int column)
+        {
+            line = 0; column = 0;
+            for (int i = 0; i < Math.Min(offset, text.Length); i++)
+            {
+                if (text[i] == '\n') { line++; column = 0; }
+                else if (text[i] != '\r') column++;
+            }
+        }
+
+        private static bool IsObjectCharacter(char value) => char.IsLetterOrDigit(value) || value == '_' || value == '$' || value == '#' || value == '@' || value == '.' || value == '[' || value == ']';
+
+        private void DismissNativeCompletion()
+        {
+            if (nextCommandTarget == null) return;
+            IntPtr handle = textView?.GetWindowHandle() ?? IntPtr.Zero;
+            IntPtr focused = GetFocus();
+            if (handle == IntPtr.Zero || focused == IntPtr.Zero || (focused != handle && !IsChild(handle, focused))) return;
+            Guid group = VSConstants.VSStd2K;
+            nextCommandTarget.Exec(ref group, (uint)VSConstants.VSStd2KCmdID.CANCEL, 0, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetFocus(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetFocus();
+
+        [DllImport("user32.dll")]
+        private static extern bool IsChild(IntPtr parent, IntPtr window);
+
+        private const int WhKeyboardLowLevel = 13;
+        private const int VkF12 = 0x7B;
+        private const int WmKeyDown = 0x0100;
+        private const int WmKeyUp = 0x0101;
+        private const int WmSysKeyDown = 0x0104;
+        private const int WmSysKeyUp = 0x0105;
+        private delegate IntPtr KeyboardHookProc(int code, IntPtr virtualKey, IntPtr keyData);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct LowLevelKeyboardInput
+        {
+            public uint VirtualKey;
+            public uint ScanCode;
+            public uint Flags;
+            public uint Time;
+            public IntPtr ExtraInfo;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern IntPtr SetWindowsHookEx(int hookType, KeyboardHookProc callback, IntPtr module, uint threadId);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr virtualKey, IntPtr keyData);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        private static extern IntPtr GetModuleHandle(string moduleName);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentProcessId();
+
         private static bool TryGetTypedCharacter(IntPtr variant, out char value)
         {
             value = '\0';
@@ -252,13 +502,171 @@ namespace AxialSqlTools
             return false;
         }
 
+        private bool TryHandlePhysicalF12()
+        {
+            if (!IsPhysicalF12Target()) return false;
+            return BeginGoToDefinition();
+        }
+
+        private bool IsPhysicalF12Target()
+        {
+            if (!ShortcutManager.IsF12Shortcut(SettingsManager.GetScriptObjectShortcut())) return false;
+            if (Control.ModifierKeys != Keys.None) return false;
+
+            IntPtr foreground = GetForegroundWindow();
+            if (foreground == IntPtr.Zero) return false;
+            GetWindowThreadProcessId(foreground, out uint foregroundProcessId);
+            return foregroundProcessId == GetCurrentProcessId() && textView != null;
+        }
+
+        private static class F12KeyboardHook
+        {
+            private static readonly System.Collections.Generic.List<KeypressCommandFilter> Targets
+                = new System.Collections.Generic.List<KeypressCommandFilter>();
+            private static KeyboardHookProc callback;
+            private static IntPtr hook;
+            private static KeypressCommandFilter handledTarget;
+
+            public static bool Register(KeypressCommandFilter target)
+            {
+                if (!Targets.Contains(target)) Targets.Add(target);
+                if (hook != IntPtr.Zero) return true;
+
+                callback = Callback;
+                hook = SetWindowsHookEx(WhKeyboardLowLevel, callback, GetModuleHandle(null), 0);
+                if (hook == IntPtr.Zero)
+                {
+                    var error = new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                    FeatureDiagnostics.Report("SQL Navigation", "Could not install the low-level F12 keyboard hook", error);
+                    AxialSqlToolsPackage._logger?.Error(error, "Could not install the low-level F12 keyboard hook.");
+                    Targets.Remove(target);
+                    callback = null;
+                    return false;
+                }
+
+                AxialSqlToolsPackage._logger?.Info("Low-level F12 keyboard hook installed for SQL editor views.");
+                return true;
+            }
+
+            public static void Unregister(KeypressCommandFilter target)
+            {
+                Targets.Remove(target);
+                if (ReferenceEquals(handledTarget, target)) handledTarget = null;
+                if (Targets.Count != 0 || hook == IntPtr.Zero) return;
+
+                UnhookWindowsHookEx(hook);
+                hook = IntPtr.Zero;
+                callback = null;
+                AxialSqlToolsPackage._logger?.Info("Low-level F12 keyboard hook removed.");
+            }
+
+            private static IntPtr Callback(int code, IntPtr message, IntPtr keyData)
+            {
+                if (code >= 0 && keyData != IntPtr.Zero)
+                {
+                    var input = Marshal.PtrToStructure<LowLevelKeyboardInput>(keyData);
+                    if (input.VirtualKey == VkF12)
+                    {
+                        int messageId = message.ToInt32();
+                        bool keyDown = messageId == WmKeyDown || messageId == WmSysKeyDown;
+                        bool keyUp = messageId == WmKeyUp || messageId == WmSysKeyUp;
+                        AxialSqlToolsPackage._logger?.Info("Low-level physical F12 event observed: " + messageId);
+
+                        if (keyUp && handledTarget != null)
+                        {
+                            handledTarget = null;
+                            return new IntPtr(1);
+                        }
+
+                        if (keyDown && handledTarget != null)
+                            return new IntPtr(1);
+
+                        if (keyDown)
+                        {
+                            KeypressCommandFilter target = FindFocusedTarget();
+                            if (target == null)
+                            {
+                                AxialSqlToolsPackage._logger?.Info("F12 was observed, but the focused VS text view is not a registered SQL editor.");
+                            }
+                            else
+                            {
+                                try
+                                {
+                                    if (target.TryHandlePhysicalF12())
+                                    {
+                                        handledTarget = target;
+                                        AxialSqlToolsPackage._logger?.Info("Physical F12 captured by the active SQL editor.");
+                                        return new IntPtr(1);
+                                    }
+
+                                    AxialSqlToolsPackage._logger?.Info("F12 reached the active SQL editor but was not handled. Configured shortcut: "
+                                        + SettingsManager.GetScriptObjectShortcut());
+                                }
+                                catch (Exception ex)
+                                {
+                                    FeatureDiagnostics.Report("SQL Navigation", "Low-level F12 dispatch failed", ex);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return CallNextHookEx(hook, code, message, keyData);
+            }
+
+            private static KeypressCommandFilter FindFocusedTarget()
+            {
+                try
+                {
+                    var textManager = Package.GetGlobalService(typeof(SVsTextManager)) as IVsTextManager;
+                    if (textManager == null
+                        || textManager.GetActiveView(1, null, out IVsTextView focusedView) != VSConstants.S_OK
+                        || focusedView == null)
+                        return null;
+
+                    for (int index = Targets.Count - 1; index >= 0; index--)
+                        if (Targets[index].IsFor(focusedView)) return Targets[index];
+
+                    // ScriptFactory can activate a newly created editor before the
+                    // DTE window event has finished exposing its DocData. Register
+                    // that focused view synchronously so the next F12 is never lost.
+                    KeypressCommandFilter owner = Targets.Count == 0 ? null : Targets[Targets.Count - 1];
+                    return owner?.package?.EnsureCommandFilter(focusedView);
+                }
+                catch (Exception ex)
+                {
+                    AxialSqlToolsPackage._logger?.Error(ex, "Could not resolve the focused SQL editor for F12.");
+                    return null;
+                }
+            }
+        }
+
         public void Dispose()
         {
+            if (f12KeyboardHookRegistered)
+            {
+                F12KeyboardHook.Unregister(this);
+                f12KeyboardHookRegistered = false;
+            }
+            navigationCancellation?.Cancel();
+            navigationCancellation?.Dispose();
+            navigationCancellation = null;
             completionController.Dispose();
             try { textView?.RemoveCommandFilter(this); } catch { }
             textView = null;
         }
 
-        public bool IsFor(IVsTextView view) => ReferenceEquals(textView, view);
+        public bool IsFor(IVsTextView view)
+        {
+            if (ReferenceEquals(textView, view)) return true;
+            if (textView == null || view == null) return false;
+            try
+            {
+                IntPtr ownHandle = textView.GetWindowHandle();
+                return ownHandle != IntPtr.Zero && ownHandle == view.GetWindowHandle();
+            }
+            catch { return false; }
+        }
+        public void DismissCompletion() => completionController.Dismiss();
     }
 }

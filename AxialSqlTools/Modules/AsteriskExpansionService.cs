@@ -1,17 +1,40 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.SqlServer.TransactSql.ScriptDom;
+using AxialSqlTools.Completion;
 using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.TextManager.Interop;
+using Microsoft.VisualStudio.Shell;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 
 namespace AxialSqlTools
 {
     public static class AsteriskExpansionService
     {
+        private static readonly ConcurrentDictionary<IntPtr, ExpansionRequest> PendingExpansions = new ConcurrentDictionary<IntPtr, ExpansionRequest>();
+        private sealed class ExpansionRequest
+        {
+            public IVsTextView View;
+            public IVsTextLines Buffer;
+            public string DocumentText;
+            public int Line;
+            public int CaretColumn;
+            public int StarColumn;
+            public int StarOffset;
+            public string Qualifier;
+            public SelectInfo Select;
+            public string TempTableSetup;
+            public ScriptFactoryAccess.ConnectionInfo Connection;
+            public CancellationTokenSource Cancellation = new CancellationTokenSource();
+        }
         private sealed class SelectInfo
         {
             public string MetadataStatementText { get; set; }
@@ -25,6 +48,8 @@ namespace AxialSqlTools
 
         private sealed class TableInfo
         {
+            public string ServerName { get; set; }
+            public string DatabaseName { get; set; }
             public string SchemaName { get; set; }
             public string TableName { get; set; }
             public string Qualifier { get; set; }
@@ -37,6 +62,12 @@ namespace AxialSqlTools
             public string SourceTableName { get; set; }
             public string SourceQualifier { get; set; }
             public string Qualifier { get; set; } = string.Empty;
+        }
+
+        private sealed class TempTableSetup
+        {
+            public int Index;
+            public List<string> Statements { get; } = new List<string>();
         }
 
         public static bool TryExpand(IVsTextView textView)
@@ -60,16 +91,122 @@ namespace AxialSqlTools
                 string tempTableSetup = GetPriorTempTableCreateStatements(fullText, selectInfo.StatementStartOffset);
                 List<ColumnInfo> columns = GetResultColumns(selectInfo, tempTableSetup, qualifier);
                 if (columns.Count == 0)
-                    return false;
+                    return QueueExpansionAfterMetadataLoad(textView, textLines, fullText, line, column, starColumn, starOffset, qualifier, selectInfo, tempTableSetup);
 
                 string replacement = BuildColumnList(columns, starColumn, qualifier);
                 ReplaceText(textLines, line, starColumn, column, replacement);
                 SetCaretPosition(textView, line, starColumn, replacement, replacement.Length);
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                FeatureDiagnostics.Report("Asterisk Expansion", "Expansion failed", ex);
                 return false;
+            }
+        }
+
+        private static bool QueueExpansionAfterMetadataLoad(IVsTextView textView, IVsTextLines buffer, string documentText,
+            int line, int caretColumn, int starColumn, int starOffset, string qualifier, SelectInfo selectInfo, string tempTableSetup)
+        {
+            ScriptFactoryAccess.ConnectionInfo connection = ScriptFactoryAccess.GetCurrentConnectionInfo();
+            if (connection == null || string.IsNullOrWhiteSpace(connection.FullConnectionString)) return false;
+            IntPtr key = textView.GetWindowHandle();
+            var request = new ExpansionRequest
+            {
+                View = textView, Buffer = buffer, DocumentText = documentText, Line = line, CaretColumn = caretColumn,
+                StarColumn = starColumn, StarOffset = starOffset, Qualifier = qualifier, Select = selectInfo,
+                TempTableSetup = tempTableSetup, Connection = connection
+            };
+            if (PendingExpansions.TryGetValue(key, out ExpansionRequest previous)) previous.Cancellation.Cancel();
+            PendingExpansions[key] = request;
+            ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                try
+                {
+                    MetadataSnapshot metadata = await SqlMetadataCache.GetAsync(connection, request.Cancellation.Token);
+                    request.Cancellation.Token.ThrowIfCancellationRequested();
+                    ApplyCachedColumns(request.Select, metadata);
+                    List<ColumnInfo> resolved = GetColumnsFromTableReferences(null, request.Select.Tables, request.Qualifier,
+                        request.Select.LocalColumnsByName, request.Select.LocalQueriesByName);
+                    if (resolved.Count == 0)
+                        resolved = await Task.Run(() => ResolveFromServer(request), request.Cancellation.Token);
+                    request.Cancellation.Token.ThrowIfCancellationRequested();
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    if (resolved.Count == 0 || !IsRequestCurrent(request)) return;
+                    string replacement = BuildColumnList(resolved, request.StarColumn, request.Qualifier);
+                    ReplaceText(request.Buffer, request.Line, request.StarColumn, request.CaretColumn, replacement);
+                    SetCaretPosition(request.View, request.Line, request.StarColumn, replacement, replacement.Length);
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex) { FeatureDiagnostics.Report("Asterisk Expansion", "Deferred expansion failed", ex); }
+                finally
+                {
+                    if (PendingExpansions.TryGetValue(key, out ExpansionRequest current) && ReferenceEquals(current, request))
+                        PendingExpansions.TryRemove(key, out ExpansionRequest _);
+                    request.Cancellation.Dispose();
+                }
+            });
+            return true;
+        }
+
+        private static bool IsRequestCurrent(ExpansionRequest request)
+        {
+            if (request.Cancellation.IsCancellationRequested || request.View == null || request.Buffer == null) return false;
+            if (request.View.GetBuffer(out IVsTextLines currentBuffer) != VSConstants.S_OK || !ReferenceEquals(currentBuffer, request.Buffer)) return false;
+            if (!TryGetFullText(currentBuffer, out string currentText)) return false;
+            request.View.GetCaretPos(out int line, out int column);
+            if (!TryGetAsteriskAtCaret(currentBuffer, line, column, out int starColumn, out string qualifier)) return false;
+            return IsExpansionSnapshotCurrent(request.DocumentText, currentText, request.Line, request.CaretColumn,
+                request.StarColumn, request.StarOffset, request.Qualifier, line, column, starColumn,
+                GetAbsoluteOffset(currentText, line, starColumn), qualifier);
+        }
+
+        internal static bool IsExpansionSnapshotCurrent(string originalText, string currentText,
+            int originalLine, int originalCaretColumn, int originalStarColumn, int originalStarOffset, string originalQualifier,
+            int currentLine, int currentCaretColumn, int currentStarColumn, int currentStarOffset, string currentQualifier)
+        {
+            return string.Equals(originalText, currentText, StringComparison.Ordinal)
+                && originalLine == currentLine && originalCaretColumn == currentCaretColumn
+                && originalStarColumn == currentStarColumn && originalStarOffset == currentStarOffset
+                && string.Equals(originalQualifier, currentQualifier, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void ApplyCachedColumns(SelectInfo selectInfo, MetadataSnapshot cached)
+        {
+            if (cached == null) return;
+            foreach (TableInfo table in selectInfo.Tables)
+            {
+                if (selectInfo.LocalColumnsByName.ContainsKey(table.TableName)) continue;
+                DatabaseObjectMetadata match = cached.Objects.Find(o => string.Equals(o.Name, table.TableName, StringComparison.OrdinalIgnoreCase)
+                    && (string.IsNullOrWhiteSpace(table.ServerName) || string.Equals(o.Server, table.ServerName, StringComparison.OrdinalIgnoreCase))
+                    && (string.IsNullOrWhiteSpace(table.DatabaseName) || string.Equals(o.Database, table.DatabaseName, StringComparison.OrdinalIgnoreCase))
+                    && (string.IsNullOrWhiteSpace(table.SchemaName) || string.Equals(o.Schema, table.SchemaName, StringComparison.OrdinalIgnoreCase)));
+                if (match != null) selectInfo.LocalColumnsByName[table.TableName] = match.Columns.ConvertAll(c => c.Name);
+            }
+        }
+
+        private static List<ColumnInfo> ResolveFromServer(ExpansionRequest request)
+        {
+            request.Cancellation.Token.ThrowIfCancellationRequested();
+            using (var connection = new SqlConnection(request.Connection.FullConnectionString))
+            {
+                connection.Open();
+                if (!string.IsNullOrWhiteSpace(request.TempTableSetup))
+                {
+                    using (var setup = connection.CreateCommand())
+                    {
+                        setup.CommandText = request.TempTableSetup;
+                        setup.CommandTimeout = 10;
+                        setup.ExecuteNonQuery();
+                    }
+                }
+                List<ColumnInfo> columns = GetColumnsFromTableReferences(connection, request.Select.Tables, request.Qualifier,
+                    request.Select.LocalColumnsByName, request.Select.LocalQueriesByName);
+                if (columns.Count > 0) return columns;
+                return request.Select.AllowMetadataFallback
+                    ? GetResultColumnsFromFmtOnly(connection, request.Select.MetadataStatementText, request.Select.TableQualifiersByName,
+                        string.IsNullOrWhiteSpace(request.Qualifier) && request.Select.Tables != null && request.Select.Tables.Count > 1)
+                    : columns;
             }
         }
 
@@ -160,16 +297,44 @@ namespace AxialSqlTools
             {
                 foreach (TSqlStatement statement in batch.Statements)
                 {
-                    if (!(statement is SelectStatement) || !ContainsCursor(fragment, statement, cursorLine, cursorColumn))
+                    SelectStatement selectStatement = GetSelectStatement(statement);
+                    TSqlFragment selectFragment = selectStatement != null && selectStatement.FragmentLength > 0 ? (TSqlFragment)selectStatement : selectStatement?.QueryExpression;
+                    if (selectStatement == null || selectFragment == null || !ContainsCursor(fragment, selectFragment, cursorLine, cursorColumn))
                         continue;
 
-                    if (statement.StartOffset < 0 || statement.FragmentLength <= 0 || statement.StartOffset + statement.FragmentLength > fullText.Length)
+                    if (selectFragment == null || selectFragment.StartOffset < 0 || selectFragment.FragmentLength <= 0 || selectFragment.StartOffset + selectFragment.FragmentLength > fullText.Length)
                         return false;
 
-                    return TryBuildSelectInfo(script, fullText, (SelectStatement)statement, starOffset, out selectInfo);
+                    return TryBuildSelectInfo(script, fullText, selectStatement, starOffset, out selectInfo);
                 }
             }
 
+            return false;
+        }
+
+        private static SelectStatement GetSelectStatement(TSqlStatement statement)
+        {
+            if (statement is SelectStatement select) return select;
+            if (statement is InsertStatement insert && insert.InsertSpecification?.InsertSource is SelectInsertSource source)
+                return new SelectStatement { QueryExpression = source.Select, WithCtesAndXmlNamespaces = insert.WithCtesAndXmlNamespaces };
+            if (statement is CreateViewStatement createView) return createView.SelectStatement;
+            if (statement is AlterViewStatement alterView) return alterView.SelectStatement;
+            if (statement is CreateOrAlterViewStatement createOrAlterView) return createOrAlterView.SelectStatement;
+            return null;
+        }
+
+        internal static bool CanAnalyzeAsteriskContext(string fullText, int starOffset)
+        {
+            var parser = new TSql170Parser(false);
+            TSqlFragment parsed = parser.Parse(new StringReader(fullText ?? string.Empty), out IList<ParseError> errors);
+            var script = parsed as TSqlScript;
+            if (script == null || (errors != null && errors.Count > 0)) return false;
+            foreach (TSqlBatch batch in script.Batches)
+                foreach (TSqlStatement statement in batch.Statements)
+                {
+                    SelectStatement select = GetSelectStatement(statement);
+                    if (select != null && TryBuildSelectInfo(script, fullText, select, starOffset, out SelectInfo _)) return true;
+                }
             return false;
         }
 
@@ -188,16 +353,24 @@ namespace AxialSqlTools
             if (selectListStart < 0 || selectListEnd <= selectListStart || selectListEnd > fullText.Length)
                 return false;
 
-            string statementText = fullText.Substring(statement.StartOffset, statement.FragmentLength);
+            int statementStart = statement.StartOffset;
+            int statementLength = statement.FragmentLength;
+            if ((statementLength <= 0 || statementStart + statementLength > fullText.Length) && statement.QueryExpression != null)
+            {
+                statementStart = statement.QueryExpression.StartOffset;
+                statementLength = statement.QueryExpression.FragmentLength;
+            }
+            if (statementStart < 0 || statementLength <= 0 || statementStart + statementLength > fullText.Length) return false;
+            string statementText = fullText.Substring(statementStart, statementLength);
             string starText = fullText.Substring(selectedStar.StartOffset, selectedStar.FragmentLength);
-            int relativeSelectListStart = selectListStart - statement.StartOffset;
-            int relativeSelectListEnd = selectListEnd - statement.StartOffset;
+            int relativeSelectListStart = selectListStart - statementStart;
+            int relativeSelectListEnd = selectListEnd - statementStart;
             Dictionary<string, QueryExpression> localQueriesByName;
-            Dictionary<string, List<string>> localColumnsByName = GetLocalColumns(script, statement, out localQueriesByName);
+            Dictionary<string, List<string>> localColumnsByName = GetLocalColumns(script, statement, statementStart, out localQueriesByName);
 
             selectInfo = new SelectInfo
             {
-                StatementStartOffset = statement.StartOffset,
+                StatementStartOffset = statementStart,
                 MetadataStatementText = statementText.Substring(0, relativeSelectListStart)
                     + starText
                     + statementText.Substring(relativeSelectListEnd),
@@ -260,7 +433,7 @@ namespace AxialSqlTools
             return fragment.StartOffset <= offset && offset < fragment.StartOffset + fragment.FragmentLength;
         }
 
-        private static bool ContainsCursor(TSqlFragment fragment, TSqlStatement statement, int cursorLine, int cursorColumn)
+        private static bool ContainsCursor(TSqlFragment fragment, TSqlFragment statement, int cursorLine, int cursorColumn)
         {
             TSqlParserToken firstToken = fragment.ScriptTokenStream[statement.FirstTokenIndex];
             TSqlParserToken lastToken = fragment.ScriptTokenStream[statement.LastTokenIndex];
@@ -275,7 +448,7 @@ namespace AxialSqlTools
             return true;
         }
 
-        private static string GetPriorTempTableCreateStatements(string fullText, int beforeOffset)
+        internal static string GetPriorTempTableCreateStatements(string fullText, int beforeOffset)
         {
             if (string.IsNullOrWhiteSpace(fullText) || beforeOffset <= 0)
                 return string.Empty;
@@ -285,7 +458,7 @@ namespace AxialSqlTools
             if (!(fragment is TSqlScript script))
                 return string.Empty;
 
-            var statements = new List<string>();
+            var active = new Dictionary<string, TempTableSetup>(StringComparer.OrdinalIgnoreCase);
             foreach (TSqlBatch batch in script.Batches)
             {
                 foreach (TSqlStatement statement in batch.Statements)
@@ -293,18 +466,30 @@ namespace AxialSqlTools
                     if (statement.StartOffset >= beforeOffset)
                         continue;
 
+                    if (statement.StartOffset < 0 || statement.FragmentLength <= 0 || statement.StartOffset + statement.FragmentLength > fullText.Length)
+                        continue;
+
+                    string statementText = fullText.Substring(statement.StartOffset, statement.FragmentLength);
+
                     if (statement is CreateTableStatement createTable
                         && IsTempTable(createTable.SchemaObjectName)
-                        && statement.StartOffset >= 0
-                        && statement.FragmentLength > 0
-                        && statement.StartOffset + statement.FragmentLength <= fullText.Length)
+                        && createTable.SchemaObjectName?.BaseIdentifier != null)
                     {
-                        statements.Add(fullText.Substring(statement.StartOffset, statement.FragmentLength));
+                        var setup = new TempTableSetup { Index = statement.StartOffset };
+                        setup.Statements.Add(statementText);
+                        active[createTable.SchemaObjectName.BaseIdentifier.Value] = setup;
+                        continue;
                     }
+
+                    Match drop = Regex.Match(statementText, @"^\s*DROP\s+TABLE(?:\s+IF\s+EXISTS)?\s+(?<name>\#\#?\w+)", RegexOptions.IgnoreCase);
+                    if (drop.Success) { active.Remove(drop.Groups["name"].Value); continue; }
+                    Match alter = Regex.Match(statementText, @"^\s*ALTER\s+TABLE\s+(?<name>\#\#?\w+)\b", RegexOptions.IgnoreCase);
+                    if (alter.Success && active.TryGetValue(alter.Groups["name"].Value, out TempTableSetup setupForAlter))
+                        setupForAlter.Statements.Add(statementText);
                 }
             }
 
-            return string.Join(Environment.NewLine, statements);
+            return string.Join(Environment.NewLine, active.Values.OrderBy(x => x.Index).SelectMany(x => x.Statements));
         }
 
         private static bool IsTempTable(SchemaObjectName name)
@@ -326,32 +511,17 @@ namespace AxialSqlTools
             if (connectionInfo == null || string.IsNullOrWhiteSpace(connectionInfo.FullConnectionString))
                 return columns;
 
-            using (var connection = new SqlConnection(connectionInfo.FullConnectionString))
+            if (SqlMetadataCache.TryGetCached(connectionInfo, out MetadataSnapshot cached))
             {
-                connection.Open();
-
-                if (!string.IsNullOrWhiteSpace(tempTableSetup))
-                {
-                    using (var setupCommand = connection.CreateCommand())
-                    {
-                        setupCommand.CommandText = tempTableSetup;
-                        setupCommand.CommandTimeout = 5;
-                        setupCommand.ExecuteNonQuery();
-                    }
-                }
-
-                columns = GetColumnsFromTableReferences(connection, selectInfo.Tables, typedQualifier, selectInfo.LocalColumnsByName, selectInfo.LocalQueriesByName);
-                if (columns.Count > 0)
-                    return columns;
-
-                return selectInfo.AllowMetadataFallback
-                    ? GetResultColumnsFromFmtOnly(
-                        connection,
-                        selectInfo.MetadataStatementText,
-                        selectInfo.TableQualifiersByName,
-                        string.IsNullOrWhiteSpace(typedQualifier) && selectInfo.Tables != null && selectInfo.Tables.Count > 1)
-                    : columns;
+                ApplyCachedColumns(selectInfo, cached);
+                columns = GetColumnsFromTableReferences(null, selectInfo.Tables, typedQualifier, selectInfo.LocalColumnsByName, selectInfo.LocalQueriesByName);
+                if (columns.Count > 0) return columns;
             }
+
+            // Editor command filters run on the SSMS UI thread. Never open a database
+            // connection here: warm the shared cache asynchronously and let the next
+            // invocation use it.
+            return columns;
         }
 
         private static List<ColumnInfo> GetColumnsFromTableReferences(
@@ -451,10 +621,30 @@ namespace AxialSqlTools
             using (var command = connection.CreateCommand())
             {
                 command.CommandTimeout = 5;
-                command.Parameters.AddWithValue("@objectName", GetObjectNameForLookup(table));
-                command.CommandText = table.TableName.StartsWith("#", StringComparison.Ordinal)
-                    ? "SELECT c.[name] FROM tempdb.sys.columns c WHERE c.[object_id] = OBJECT_ID(@objectName) ORDER BY c.column_id;"
-                    : "SELECT c.[name] FROM sys.columns c WHERE c.[object_id] = OBJECT_ID(@objectName) ORDER BY c.column_id;";
+                command.Parameters.AddWithValue("@tableName", table.TableName);
+                command.Parameters.AddWithValue("@schemaName", string.IsNullOrWhiteSpace(table.SchemaName) ? (object)DBNull.Value : table.SchemaName);
+                if (table.TableName.StartsWith("#", StringComparison.Ordinal))
+                {
+                    command.Parameters.AddWithValue("@objectName", GetObjectNameForLookup(table));
+                    command.CommandText = "SELECT c.[name] FROM tempdb.sys.columns c WHERE c.[object_id] = OBJECT_ID(@objectName) ORDER BY c.column_id;";
+                }
+                else
+                {
+                    string catalog = string.Empty;
+                    if (!string.IsNullOrWhiteSpace(table.ServerName))
+                    {
+                        if (string.IsNullOrWhiteSpace(table.DatabaseName)) return result;
+                        catalog = DatabaseIdentifier.SqlServerPart(table.ServerName) + "." + DatabaseIdentifier.SqlServerPart(table.DatabaseName) + ".";
+                    }
+                    else if (!string.IsNullOrWhiteSpace(table.DatabaseName))
+                    {
+                        catalog = DatabaseIdentifier.SqlServerPart(table.DatabaseName) + ".";
+                    }
+                    command.CommandText = "SELECT c.[name] FROM " + catalog + "sys.columns c "
+                        + "JOIN " + catalog + "sys.objects o ON o.object_id=c.object_id "
+                        + "JOIN " + catalog + "sys.schemas s ON s.schema_id=o.schema_id "
+                        + "WHERE o.[name]=@tableName AND (@schemaName IS NULL OR s.[name]=@schemaName) ORDER BY c.column_id;";
+                }
 
                 using (var reader = command.ExecuteReader())
                 {
@@ -494,15 +684,44 @@ namespace AxialSqlTools
         private static List<ColumnInfo> GetResultColumnsFromFmtOnly(SqlConnection connection, string statementText, Dictionary<string, string> tableQualifiersByName, bool qualifyAllColumns)
         {
             var columns = new List<ColumnInfo>();
+            try
+            {
+                using (var command = new SqlCommand("EXEC sys.sp_describe_first_result_set @tsql=@sql, @params=NULL, @browse_information_mode=1;", connection))
+                {
+                    command.CommandTimeout = 10;
+                    command.Parameters.AddWithValue("@sql", statementText);
+                    using (var reader = command.ExecuteReader())
+                    {
+                        int nameOrdinal = reader.GetOrdinal("name");
+                        int sourceTableOrdinal = -1;
+                        try { sourceTableOrdinal = reader.GetOrdinal("source_table"); } catch { }
+                        while (reader.Read())
+                        {
+                            if (reader.IsDBNull(nameOrdinal)) continue;
+                            columns.Add(new ColumnInfo { Name = reader.GetString(nameOrdinal), SourceTableName = sourceTableOrdinal >= 0 && !reader.IsDBNull(sourceTableOrdinal) ? reader.GetString(sourceTableOrdinal) : null });
+                        }
+                    }
+                }
+            }
+            catch (SqlException ex)
+            {
+                FeatureDiagnostics.Report("Asterisk Expansion", "sp_describe_first_result_set could not resolve the query; using temp-table fallback", ex);
+            }
+            if (columns.Count > 0)
+            {
+                ApplyQualifiers(columns, tableQualifiersByName, qualifyAllColumns);
+                return columns;
+            }
+
+            // Legacy fallback is restricted to the isolated background connection;
+            // it is retained for session temp tables that the describe procedure rejects.
+            if (statementText.IndexOf('#') < 0)
+                return columns;
 
             using (var command = connection.CreateCommand())
             {
-                // ponytail: FMTONLY is metadata-only fallback; ceiling is dynamic SQL/temp-table-heavy scripts. Upgrade path: richer ScriptDom + database metadata resolver.
-                command.CommandText = "SET FMTONLY ON;" + Environment.NewLine
-                    + statementText + Environment.NewLine
-                    + "SET FMTONLY OFF;";
+                command.CommandText = "SET FMTONLY ON;" + Environment.NewLine + statementText + Environment.NewLine + "SET FMTONLY OFF;";
                 command.CommandTimeout = 5;
-
                 using (var reader = command.ExecuteReader())
                 {
                     do
@@ -635,9 +854,13 @@ namespace AxialSqlTools
                     return;
 
                 string alias = namedTable.Alias?.Value;
+                IList<Identifier> identifiers = namedTable.SchemaObject?.Identifiers;
+                int count = identifiers?.Count ?? 0;
                 result.Add(new TableInfo
                 {
-                    SchemaName = namedTable.SchemaObject?.SchemaIdentifier?.Value,
+                    ServerName = count >= 4 ? identifiers[count - 4].Value : null,
+                    DatabaseName = count >= 3 ? identifiers[count - 3].Value : null,
+                    SchemaName = count >= 2 ? identifiers[count - 2].Value : null,
                     TableName = tableName,
                     Qualifier = !string.IsNullOrWhiteSpace(alias) ? alias + "." : EscapeIdentifier(tableName) + "."
                 });
@@ -754,29 +977,30 @@ namespace AxialSqlTools
         private static Dictionary<string, List<string>> GetLocalColumns(
             TSqlScript script,
             SelectStatement statement,
+            int statementStart,
             out Dictionary<string, QueryExpression> localQueriesByName)
         {
             var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             localQueriesByName = new Dictionary<string, QueryExpression>(StringComparer.OrdinalIgnoreCase);
-            AddPriorTableVariables(script, statement, result);
-            AddPriorSelectIntoTempTables(script, statement, result);
+            AddPriorTableVariables(script, statementStart, result);
+            AddPriorSelectIntoTempTables(script, statementStart, result);
             AddCommonTableExpressions(statement.WithCtesAndXmlNamespaces, result, localQueriesByName);
             return result;
         }
 
-        private static void AddPriorTableVariables(TSqlScript script, SelectStatement targetStatement, Dictionary<string, List<string>> result)
+        private static void AddPriorTableVariables(TSqlScript script, int targetOffset, Dictionary<string, List<string>> result)
         {
-            if (script == null || targetStatement == null || result == null)
+            if (script == null || result == null)
                 return;
 
             foreach (TSqlBatch batch in script.Batches)
             {
-                if (!BatchContainsStatement(batch, targetStatement))
+                if (!BatchContainsOffset(batch, targetOffset))
                     continue;
 
                 foreach (TSqlStatement statement in batch.Statements)
                 {
-                    if (statement.StartOffset >= targetStatement.StartOffset)
+                    if (statement.StartOffset >= targetOffset)
                         continue;
 
                     if (!(statement is DeclareTableVariableStatement declareTable) || declareTable.Body == null)
@@ -800,19 +1024,16 @@ namespace AxialSqlTools
             }
         }
 
-        private static void AddPriorSelectIntoTempTables(TSqlScript script, SelectStatement targetStatement, Dictionary<string, List<string>> result)
+        private static void AddPriorSelectIntoTempTables(TSqlScript script, int targetOffset, Dictionary<string, List<string>> result)
         {
-            if (script == null || targetStatement == null || result == null)
+            if (script == null || result == null)
                 return;
 
             foreach (TSqlBatch batch in script.Batches)
             {
-                if (!BatchContainsStatement(batch, targetStatement))
-                    continue;
-
                 foreach (TSqlStatement statement in batch.Statements)
                 {
-                    if (statement.StartOffset >= targetStatement.StartOffset)
+                    if (statement.StartOffset >= targetOffset)
                         continue;
 
                     if (!(statement is SelectStatement selectInto) || !IsTempTable(selectInto.Into))
@@ -829,18 +1050,10 @@ namespace AxialSqlTools
             }
         }
 
-        private static bool BatchContainsStatement(TSqlBatch batch, TSqlStatement targetStatement)
+        private static bool BatchContainsOffset(TSqlBatch batch, int targetOffset)
         {
-            if (batch?.Statements == null || targetStatement == null)
-                return false;
-
-            foreach (TSqlStatement statement in batch.Statements)
-            {
-                if (ReferenceEquals(statement, targetStatement))
-                    return true;
-            }
-
-            return false;
+            return batch != null && batch.StartOffset <= targetOffset
+                && targetOffset <= batch.StartOffset + batch.FragmentLength;
         }
 
         private static void AddCommonTableExpressions(
@@ -1099,8 +1312,12 @@ namespace AxialSqlTools
             IntPtr pNewText = Marshal.StringToHGlobalUni(replacement);
             try
             {
-                TextSpan[] changedSpan = new TextSpan[1];
-                textLines.ReplaceLines(line, startColumn, line, endColumn, pNewText, replacement.Length, changedSpan);
+                using (var edit = EditorEditTransaction.Begin(textLines, "Expand SELECT asterisk"))
+                {
+                    TextSpan[] changedSpan = new TextSpan[1];
+                    textLines.ReplaceLines(line, startColumn, line, endColumn, pNewText, replacement.Length, changedSpan);
+                    edit.Complete();
+                }
             }
             finally
             {

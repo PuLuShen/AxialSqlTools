@@ -182,27 +182,12 @@ namespace AxialSqlTools
             //statusBarManager_completedTimePanel.Visible = true;
 
             var generalPanel = GetNonPublicField(statusBarManager, "generalPanel");
-            if (OpenTranCount > 0)
-            {
-                SetPropertyValue(generalPanel, "ForeColor", Color.Red);
-            }
-            else
-            {
-                SetPropertyValue(generalPanel, "ForeColor", Color.Black);
-            }
-
-            // TODO - need to contract font from existing property..
-            Font defaultFont = new Font("Segoe UI", 9);
-            Font boldFont = new Font("Segoe UI", 10, FontStyle.Bold);
-
             var statusStrip = GetNonPublicField(statusBarManager, "statusStrip");
-            if (OpenTranCount > 0 || isColumnEncryptionSettingOn)
+            if (statusStrip is StatusStrip nativeStatusStrip)
             {
-                SetPropertyValue(statusStrip, "Font", boldFont);
-            }
-            else
-            {
-                SetPropertyValue(statusStrip, "Font", defaultFont);
+                GetStatusStripColorController(nativeStatusStrip).ApplyWarningStyle(
+                    generalPanel,
+                    OpenTranCount > 0 || isColumnEncryptionSettingOn);
             }
         }
 
@@ -242,75 +227,22 @@ namespace AxialSqlTools
 
         private sealed class StatusStripColorController
         {
-            private readonly StatusStrip _statusStrip;
-            private readonly Dictionary<ToolStripItem, ToolStripItemColorSnapshot> _itemSnapshots =
-                new Dictionary<ToolStripItem, ToolStripItemColorSnapshot>();
-            private bool _isApplied;
-
             public StatusStripColorController(StatusStrip statusStrip)
             {
-                _statusStrip = statusStrip;
                 OriginalBackColor = statusStrip.BackColor;
-                OriginalForeColor = statusStrip.ForeColor;
             }
 
             public Color OriginalBackColor { get; }
-            public Color OriginalForeColor { get; }
 
-            public void ApplyColor(Color color)
+            public void ApplyWarningStyle(object generalPanel, bool warning)
             {
-                Color foreColor = ContrastColor(color);
-
-                foreach (ToolStripItem item in _statusStrip.Items)
-                {
-                    if (!_itemSnapshots.ContainsKey(item))
-                    {
-                        _itemSnapshots[item] = new ToolStripItemColorSnapshot
-                        {
-                            BackColor = item.BackColor,
-                            ForeColor = item.ForeColor
-                        };
-                    }
-
-                    item.BackColor = color;
-                    item.ForeColor = foreColor;
-                }
-
-                _statusStrip.BackColor = color;
-                _statusStrip.ForeColor = foreColor;
-                _isApplied = true;
+                // SSMS owns the native status strip and chooses accessible text
+                // colors for the current theme. Do not override its child items.
             }
 
             public void Restore()
             {
-                if (!_isApplied)
-                {
-                    return;
-                }
-
-                _statusStrip.BackColor = OriginalBackColor;
-                _statusStrip.ForeColor = OriginalForeColor;
-
-                foreach (var itemSnapshot in _itemSnapshots)
-                {
-                    if (itemSnapshot.Key == null || itemSnapshot.Key.IsDisposed)
-                    {
-                        continue;
-                    }
-
-                    itemSnapshot.Key.BackColor = itemSnapshot.Value.BackColor;
-                    itemSnapshot.Key.ForeColor = itemSnapshot.Value.ForeColor;
-                }
-
-                _itemSnapshots.Clear();
-                _isApplied = false;
             }
-        }
-
-        private sealed class ToolStripItemColorSnapshot
-        {
-            public Color BackColor { get; set; }
-            public Color ForeColor { get; set; }
         }
 
         private sealed class OpenDocumentTabInfo
@@ -347,7 +279,16 @@ namespace AxialSqlTools
 
             controller.Restore();
             _statusStripColorControllers.Remove(statusStrip);
-            TrySetNativeServerBackground(statusBarManager, controller.OriginalBackColor);
+            TrySetNativeServerBackground(statusBarManager, GetCurrentStatusBarColor(controller.OriginalBackColor));
+        }
+
+        private static Color GetCurrentStatusBarColor(Color fallback)
+        {
+            System.Windows.Media.Brush brush = VsThemeBrushResolver.ResolveEnvironmentBrushByName(null, "StatusBarDefaultBrushKey")
+                ?? VsThemeBrushResolver.ResolveEnvironmentBrushByName(null, "StatusBarBackgroundBrushKey");
+            if (brush is System.Windows.Media.SolidColorBrush solid)
+                return Color.FromArgb(solid.Color.A, solid.Color.R, solid.Color.G, solid.Color.B);
+            return fallback;
         }
 
         private static void TrySetNativeServerBackground(object statusBarManager, Color color)
@@ -393,12 +334,10 @@ namespace AxialSqlTools
 
                 if (matchedColor.HasValue)
                 {
+                    // SSMS owns the status-strip renderer. Let its native API choose
+                    // foregrounds for text, buttons and high-contrast themes.
+                    if (statusStrip != null) GetStatusStripColorController(statusStrip);
                     TrySetNativeServerBackground(statusBarManager, matchedColor.Value);
-
-                    if (statusStrip != null)
-                    {
-                        GetStatusStripColorController(statusStrip).ApplyColor(matchedColor.Value);
-                    }
                 }
                 else
                 {
@@ -411,53 +350,31 @@ namespace AxialSqlTools
             }
         }
 
-        private static System.Windows.Threading.DispatcherTimer _reapplyTimer;
-        private static int _reapplyRetryCount;
-
         public static void ColorAllDocumentTabs()
+        {
+            // Intentionally disabled. DocumentTabItem is an internal SSMS control.
+            // Assigning or clearing its dependency properties destroys theme-owned
+            // local values and can make native captions/buttons unreadable.
+        }
+
+        public static void RestoreNativeAppearance()
         {
             try
             {
-                var wpfApp = System.Windows.Application.Current;
-                if (wpfApp == null) return;
-
-                var mainWindow = wpfApp.MainWindow;
-                if (mainWindow == null) return;
-
-                ColorAllTabs(mainWindow);
+                object manager = GetStatusBarManager();
+                foreach (StatusStripColorController controller in new List<StatusStripColorController>(_statusStripColorControllers.Values))
+                {
+                    controller.Restore();
+                    TrySetNativeServerBackground(manager, GetCurrentStatusBarColor(controller.OriginalBackColor));
+                }
+                _statusStripColorControllers.Clear();
             }
-            catch (Exception ex)
-            {
-                _logger?.Error(ex, "Error in ColorAllDocumentTabs");
-            }
+            catch (Exception ex) { _logger?.Error(ex, "Could not restore SSMS native appearance"); }
         }
 
         private static void ColorAllTabs(System.Windows.DependencyObject mainWindow)
         {
-            var tabItems = new List<System.Windows.DependencyObject>();
-            FindElementsByTypeName(mainWindow, "DocumentTabItem", tabItems);
-            var openDocuments = GetOpenDocumentTabInfos();
-
-            if (tabItems.Count > 0)
-            {
-                foreach (var tabItem in tabItems)
-                {
-                    var headerCtrl = tabItem as System.Windows.Controls.HeaderedContentControl;
-                    string header = headerCtrl?.Header?.ToString();
-                    Color? color = FindMatchingConnectionColorForTab(tabItem, header, openDocuments);
-                    var curvedBorder = FindChildByTypeName(tabItem, "SimpleCurvedBorder")
-                                   ?? FindChildByTypeName(tabItem, "TopCurvedBorder");
-                    ApplyColorToElement(curvedBorder ?? tabItem, color);
-                    if (curvedBorder != null)
-                    {
-                        ApplyForegroundToElement(tabItem, color);
-                    }
-                }
-            }
-            else
-            {
-                ColorSingleTabFallback(mainWindow, openDocuments);
-            }
+            // Removed: direct traversal of SSMS's private document-tab visual tree.
         }
 
         private static void ColorSingleTabFallback(System.Windows.DependencyObject root, List<OpenDocumentTabInfo> openDocuments)
@@ -493,57 +410,12 @@ namespace AxialSqlTools
 
         private static void ApplyColorToElement(System.Windows.DependencyObject element, Color? matchedColor)
         {
-            if (element is System.Windows.Controls.Control ctrl)
-            {
-                if (matchedColor.HasValue)
-                {
-                    var wpfColor = System.Windows.Media.Color.FromRgb(
-                        matchedColor.Value.R, matchedColor.Value.G, matchedColor.Value.B);
-                    var brush = new System.Windows.Media.SolidColorBrush(wpfColor);
-                    brush.Freeze();
-                    var foregroundBrush = new System.Windows.Media.SolidColorBrush(ToWpfColor(ContrastColor(matchedColor.Value)));
-                    foregroundBrush.Freeze();
-                    ctrl.Background = brush;
-                    ctrl.Foreground = foregroundBrush;
-                }
-                else
-                {
-                    ctrl.ClearValue(System.Windows.Controls.Control.BackgroundProperty);
-                    ctrl.ClearValue(System.Windows.Controls.Control.ForegroundProperty);
-                }
-            }
-            else if (element is System.Windows.Controls.Border border)
-            {
-                if (matchedColor.HasValue)
-                {
-                    var wpfColor = System.Windows.Media.Color.FromRgb(
-                        matchedColor.Value.R, matchedColor.Value.G, matchedColor.Value.B);
-                    var brush = new System.Windows.Media.SolidColorBrush(wpfColor);
-                    brush.Freeze();
-                    border.Background = brush;
-                }
-                else
-                {
-                    border.ClearValue(System.Windows.Controls.Border.BackgroundProperty);
-                }
-            }
+            // Never assign dependency-property values on native SSMS controls.
         }
 
         private static void ApplyForegroundToElement(System.Windows.DependencyObject element, Color? matchedColor)
         {
-            if (!(element is System.Windows.Controls.Control ctrl))
-                return;
-
-            if (matchedColor.HasValue)
-            {
-                var brush = new System.Windows.Media.SolidColorBrush(ToWpfColor(ContrastColor(matchedColor.Value)));
-                brush.Freeze();
-                ctrl.Foreground = brush;
-            }
-            else
-            {
-                ctrl.ClearValue(System.Windows.Controls.Control.ForegroundProperty);
-            }
+            // Never assign dependency-property values on native SSMS controls.
         }
 
         private static Color? FindMatchingConnectionColorForTab(
@@ -829,25 +701,7 @@ namespace AxialSqlTools
 
         public static void ScheduleReapplyAllTabColors()
         {
-            if (_reapplyTimer == null)
-            {
-                _reapplyTimer = new System.Windows.Threading.DispatcherTimer();
-                _reapplyTimer.Interval = TimeSpan.FromMilliseconds(150);
-                _reapplyTimer.Tick += (s, e) =>
-                {
-                    _reapplyRetryCount++;
-                    try { ColorAllDocumentTabs(); } catch { }
-
-                    if (_reapplyRetryCount >= 4)
-                    {
-                        _reapplyTimer.Stop();
-                    }
-                };
-            }
-
-            _reapplyRetryCount = 0;
-            _reapplyTimer.Stop();
-            _reapplyTimer.Start();
+            // Kept as a compatibility no-op for callers compiled against older builds.
         }
 
         public static string GetColumnSqlType(DataRow schemaRow)

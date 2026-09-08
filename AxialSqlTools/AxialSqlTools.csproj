@@ -85,6 +85,16 @@
       <DependentUpon>QuickSearchWindowControl.xaml</DependentUpon>
     </Compile>
     <Compile Include="QuickSearch\TextMarkerService.cs" />
+    <Compile Include="QueryTemplates\QueryTemplateLibrary.cs" />
+    <Compile Include="QueryTemplates\QueryTemplateInsertionService.cs" />
+    <Compile Include="QueryTemplates\CreateQueryTemplateDialog.xaml.cs">
+      <DependentUpon>CreateQueryTemplateDialog.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="QueryTemplates\QueryTemplateWindow.cs" />
+    <Compile Include="QueryTemplates\QueryTemplateWindowCommand.cs" />
+    <Compile Include="QueryTemplates\QueryTemplateWindowControl.xaml.cs">
+      <DependentUpon>QueryTemplateWindowControl.xaml</DependentUpon>
+    </Compile>
     <Compile Include="SyncToGitHub\DatabaseScripterToolWindow.cs" />
     <Compile Include="SyncToGitHub\DatabaseScripterToolWindowCommand.cs" />
     <Compile Include="SyncToGitHub\DatabaseScripterToolWindowControl.xaml.cs">
@@ -92,6 +102,10 @@
     </Compile>
     <Compile Include="Modules\AuroraCore.cs" />
     <Compile Include="Modules\AsteriskExpansionService.cs" />
+    <Compile Include="Modules\FeatureDiagnostics.cs" />
+    <Compile Include="Modules\EditorEditTransaction.cs" />
+    <Compile Include="Modules\DatabaseIdentifier.cs" />
+    <Compile Include="Modules\QueryHistoryPrivacy.cs" />
     <Compile Include="UpdateChecker.cs" />
     <Compile Include="UpdateInfoBar.cs" />
     <Compile Include="Commands\CommandProcessor.cs" />
@@ -125,13 +139,6 @@
     <Compile Include="DataTransfer\DataTransferWindowControl.xaml.cs">
       <DependentUpon>DataTransferWindowControl.xaml</DependentUpon>
     </Compile>
-    <Compile Include="DataTransfer\SavedConnectionStore.cs" />
-    <Compile Include="DataTransfer\SavedConnectionManagerWindow.xaml.cs">
-      <DependentUpon>SavedConnectionManagerWindow.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="DataTransfer\SavedConnectionPickerWindow.xaml.cs">
-      <DependentUpon>SavedConnectionPickerWindow.xaml</DependentUpon>
-    </Compile>
     <Compile Include="GridToEmail\ToolWindowGridToEmail.cs" />
     <Compile Include="GridToEmail\ToolWindowGridToEmailCommand.cs" />
     <Compile Include="GridToEmail\ToolWindowGridToEmailControl.xaml.cs">
@@ -157,6 +164,7 @@
     <Compile Include="Modules\ToolWindowThemeSupport.cs" />
     <Compile Include="Modules\ScriptFactoryAccess.cs" />
     <Compile Include="Modules\ShortcutManager.cs" />
+    <Compile Include="Modules\StatusFeedback.cs" />
     <Compile Include="Modules\SettingsManager.cs" />
     <Compile Include="Modules\SQLBuilds.cs" />
     <Compile Include="Modules\TsqlFormatter.cs" />
@@ -227,6 +235,8 @@
     <Compile Include="Completion\CompletionUsageStore.cs" />
     <Compile Include="Completion\SqlCompletionAnalyzer.cs" />
     <Compile Include="Completion\SqlMetadataCache.cs" />
+    <Compile Include="Completion\SqlSemanticModel.cs" />
+    <Compile Include="Completion\SqlSymbolResolver.cs" />
     <Compile Include="Completion\SqlTextContext.cs" />
     <Reference Include="ICSharpCode.AvalonEdit">
       <HintPath>$(NuGetPackageRoot)avalonedit\6.3.1.120\lib\net462\ICSharpCode.AvalonEdit.dll</HintPath>
@@ -263,14 +273,8 @@
     <Reference Include="Microsoft.Extensions.Logging.Abstractions">
       <HintPath>$(NuGetPackageRoot)microsoft.extensions.logging.abstractions\8.0.2\lib\net462\Microsoft.Extensions.Logging.Abstractions.dll</HintPath>
     </Reference>
-    <Reference Include="MySqlConnector">
-      <HintPath>$(NuGetPackageRoot)mysqlconnector\2.6.1\lib\net471\MySqlConnector.dll</HintPath>
-    </Reference>
     <Reference Include="NLog">
       <HintPath>$(NuGetPackageRoot)nlog\6.1.4\lib\net46\NLog.dll</HintPath>
-    </Reference>
-    <Reference Include="Npgsql">
-      <HintPath>$(NuGetPackageRoot)npgsql\8.0.7\lib\netstandard2.0\Npgsql.dll</HintPath>
     </Reference>
     <Reference Include="Octokit">
       <HintPath>$(NuGetPackageRoot)octokit\14.0.0\lib\netstandard2.0\Octokit.dll</HintPath>
@@ -479,12 +483,6 @@
     <PackageReference Include="NLog">
       <Version>6.1.4</Version>
     </PackageReference>
-    <PackageReference Include="MySqlConnector">
-      <Version>2.6.1</Version>
-    </PackageReference>
-    <PackageReference Include="Npgsql">
-      <Version>8.0.7</Version>
-    </PackageReference>
     <PackageReference Include="Octokit">
       <Version>14.0.0</Version>
     </PackageReference>
@@ -543,6 +541,9 @@
     <Content Include="Resources\grid-to-temp-table.png" />
     <Content Include="Resources\info.png" />
     <Resource Include="Resources\logo.png" />
+    <Resource Include="..\pics\赞赏码.png">
+      <Link>Resources\appreciation.png</Link>
+    </Resource>
     <Content Include="Resources\open-folder.png" />
     <Resource Include="Resources\play.png" />
     <Content Include="Resources\query-history.png" />
@@ -590,6 +591,14 @@
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>
+    <Page Include="QueryTemplates\QueryTemplateWindowControl.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="QueryTemplates\CreateQueryTemplateDialog.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="SnippetManager\SnippetManagerWindowControl.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
@@ -605,14 +614,6 @@
     <Page Include="DataTransfer\DataTransferWindowControl.xaml">
       <SubType>Designer</SubType>
       <Generator>XamlIntelliSenseFileGenerator</Generator>
-    </Page>
-    <Page Include="DataTransfer\SavedConnectionManagerWindow.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
-    </Page>
-    <Page Include="DataTransfer\SavedConnectionPickerWindow.xaml">
-      <SubType>Designer</SubType>
-      <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="GridToEmail\ToolWindowGridToEmailControl.xaml">
       <SubType>Designer</SubType>
@@ -657,7 +658,7 @@
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets" Condition="Exists('$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets')" />
   <PropertyGroup>
-    <PostBuildEvent>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; { $ErrorActionPreference = 'Stop'; $manifest = '$(ProjectDir)source.extension.vsixmanifest'; [xml]$xml = Get-Content $manifest; $version = $xml.PackageManifest.Metadata.Identity.Version; $vsix = Join-Path '$(TargetDir)' 'AxialSqlTools.vsix'; $installerScript = Join-Path '$(TargetDir)' 'Installer\Install-Or-Reinstall.ps1'; $installerCommand = Join-Path '$(TargetDir)' 'Installer\安装或重装.cmd'; $baseName = 'AxialSqlTools_SSMS22_' + $version; $desktop = [Environment]::GetFolderPath('DesktopDirectory'); $destinationDirectory = if ([string]::IsNullOrWhiteSpace($desktop) -or -not (Test-Path -LiteralPath $desktop)) { '$(TargetDir)' } else { $desktop }; $versionedVsix = Join-Path $destinationDirectory ($baseName + '.vsix'); $dest = Join-Path $destinationDirectory ($baseName + '.zip'); Copy-Item -LiteralPath $vsix -Destination $versionedVsix -Force; Compress-Archive -LiteralPath @($vsix, $installerScript, $installerCommand) -DestinationPath $dest -Force }"
+    <PostBuildEvent>powershell -NoProfile -ExecutionPolicy Bypass -Command "&amp; { $ErrorActionPreference = 'Stop'; $manifest = '$(ProjectDir)source.extension.vsixmanifest'; [xml]$xml = Get-Content $manifest; $version = $xml.PackageManifest.Metadata.Identity.Version; $vsix = Join-Path '$(TargetDir)' 'AxialSqlTools.vsix'; $installerScript = Join-Path '$(TargetDir)' 'Installer\Install-Or-Reinstall.ps1'; $installerCommand = Join-Path '$(TargetDir)' 'Installer\安装或重装.cmd'; $baseName = 'AxialSqlTools_SSMS22_' + $version; $destinationDirectory = [IO.Path]::GetFullPath((Join-Path '$(ProjectDir)' '..\artifacts')); New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null; $versionedVsix = Join-Path $destinationDirectory ($baseName + '.vsix'); $dest = Join-Path $destinationDirectory ($baseName + '.zip'); Copy-Item -LiteralPath $vsix -Destination $versionedVsix -Force; Compress-Archive -LiteralPath @($vsix, $installerScript, $installerCommand) -DestinationPath $dest -Force }"
 </PostBuildEvent>
   </PropertyGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

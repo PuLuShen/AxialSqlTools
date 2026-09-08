@@ -7,7 +7,6 @@ using System.Text;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
 
 namespace AxialSqlTools
 {
@@ -373,65 +372,6 @@ ORDER BY sd.[name];
             }
         }
 
-        public enum DataTransferProvider
-        {
-            PostgreSql,
-            MySql
-        }
-
-        public class DataTransferSavedConnection
-        {
-            public string Name { get; set; }
-
-            [JsonConverter(typeof(StringEnumConverter))]
-            public DataTransferProvider Provider { get; set; }
-
-            public string Server { get; set; }
-            public int Port { get; set; }
-            public string Database { get; set; }
-            public string Username { get; set; }
-
-            [JsonProperty("Password")]
-            public string EncryptedPassword { get; set; }
-
-            [JsonIgnore]
-            private string _password;
-
-            [JsonIgnore]
-            public string Password
-            {
-                get
-                {
-                    if (_password == null && !string.IsNullOrEmpty(EncryptedPassword))
-                    {
-                        var cipher = Convert.FromBase64String(EncryptedPassword);
-                        var plain = SettingsManager.Unprotect(cipher);
-                        _password = plain != null
-                            ? Encoding.UTF8.GetString(plain)
-                            : throw new InvalidOperationException("Failed to decrypt saved connection password.");
-                    }
-                    return _password;
-                }
-                set
-                {
-                    _password = value;
-                    if (!string.IsNullOrEmpty(value))
-                    {
-                        var data = Encoding.UTF8.GetBytes(value);
-                        var cipher = SettingsManager.Protect(data);
-                        EncryptedPassword = Convert.ToBase64String(cipher);
-                    }
-                    else
-                    {
-                        EncryptedPassword = null;
-                    }
-                }
-            }
-
-            [JsonIgnore]
-            public string DisplayName => $"{Name} ({Provider})";
-        }
-
         public static byte[] Protect(byte[] data)
         {
             try
@@ -505,8 +445,16 @@ ORDER BY sd.[name];
         {
             public bool enabled = true;
             public bool automaticPopup = true;
+            public bool autoRefreshMetadata = true;
+            public bool trustServerCertificate = true;
             public bool useSquareBrackets = true;
             public bool learnFromUsage = true;
+            public bool showObjectDetails = true;
+            public bool enableColumnPicker = true;
+            public bool autoAddAliases = false;
+            public string aliasPrefixToIgnore = "tbl_,vw_";
+            public string customAliases = string.Empty;
+            public string joinColumnRules = string.Empty;
             public int delayMilliseconds = 120;
             public int maximumItems = 200;
         }
@@ -584,7 +532,7 @@ ORDER BY sd.[name];
         {
             var folder = GetRegisterValue("ScriptTemplatesFolder");
 
-            if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+            if (string.IsNullOrWhiteSpace(folder))
             {
                 folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "AxialSqlToolsTemplates");
 
@@ -602,6 +550,16 @@ ORDER BY sd.[name];
         public static bool SaveTemplatesFolder(string folder)
         {
             return SaveRegisterValue("ScriptTemplatesFolder", folder);
+        }
+
+        public static string GetQueryTemplateState()
+        {
+            return GetRegisterValue("QueryTemplateState");
+        }
+
+        public static bool SaveQueryTemplateState(string json)
+        {
+            return SaveRegisterValue("QueryTemplateState", json ?? string.Empty);
         }
 
         public static bool GetEnableUpdateChecks()
@@ -870,7 +828,7 @@ ORDER BY sd.[name];
         public static string GetScriptObjectShortcut()
         {
             string shortcut = GetRegisterValue("ScriptObjectShortcut");
-            return string.IsNullOrWhiteSpace(shortcut) ? "Ctrl+Shift+Alt+S" : shortcut;
+            return string.IsNullOrWhiteSpace(shortcut) ? "F12" : shortcut;
         }
 
         public static bool SaveScriptObjectShortcut(string shortcut)
@@ -884,31 +842,6 @@ ORDER BY sd.[name];
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "AxialSQL",
                 "QueryHistory");
-        }
-
-        public static List<DataTransferSavedConnection> GetDataTransferSavedConnections()
-        {
-            try
-            {
-                return SavedConnectionStore.Load();
-            }
-            catch
-            {
-                return new List<DataTransferSavedConnection>();
-            }
-        }
-
-        public static bool SaveDataTransferSavedConnections(List<DataTransferSavedConnection> connections)
-        {
-            try
-            {
-                SavedConnectionStore.Save(connections ?? new List<DataTransferSavedConnection>());
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         public static ExcelExportSettings GetExcelExportSettings()
@@ -1046,17 +979,43 @@ ORDER BY sd.[name];
             }
         }
 
+        public static int GetQueryHistoryRetentionDays()
+        {
+            return int.TryParse(GetRegisterValue("QueryHistoryRetentionDays"), out int days)
+                ? Math.Max(0, Math.Min(3650, days))
+                : 90;
+        }
+
+        public static bool SaveQueryHistoryRetentionDays(int days)
+        {
+            return SaveRegisterValue("QueryHistoryRetentionDays", Math.Max(0, Math.Min(3650, days)).ToString());
+        }
+
+        public static bool GetQueryHistoryRedactSensitiveText()
+        {
+            string value = GetRegisterValue("QueryHistoryRedactSensitiveText");
+            return string.IsNullOrWhiteSpace(value) || !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool SaveQueryHistoryRedactSensitiveText(bool enabled)
+        {
+            return SaveRegisterValue("QueryHistoryRedactSensitiveText", enabled.ToString());
+        }
+
         public static System.Drawing.Size GetCompletionWindowSize()
         {
-            const int defaultWidth = 560;
+            const int defaultWidth = 780;
             const int defaultHeight = 600;
             string value = GetRegisterValue("CompletionWindowSize");
             string[] parts = (value ?? string.Empty).Split('x');
             if (parts.Length == 2 && int.TryParse(parts[0], out int width) && int.TryParse(parts[1], out int height))
             {
                 // Migrate the first popup default to the taller layout.
-                if (width == 560 && (height == 320 || height == 400))
-                    height = defaultHeight;
+                if (width == 560)
+                {
+                    width = defaultWidth;
+                    if (height == 320 || height == 400) height = defaultHeight;
+                }
 
                 return new System.Drawing.Size(
                     Math.Max(360, Math.Min(1200, width)),
@@ -1071,6 +1030,18 @@ ORDER BY sd.[name];
             int width = Math.Max(360, Math.Min(1200, size.Width));
             int height = Math.Max(220, Math.Min(900, size.Height));
             return SaveRegisterValue("CompletionWindowSize", width + "x" + height);
+        }
+
+        public static int GetCompletionDetailsWidth()
+        {
+            return int.TryParse(GetRegisterValue("CompletionDetailsWidth"), out int width)
+                ? Math.Max(220, Math.Min(900, width))
+                : 400;
+        }
+
+        public static bool SaveCompletionDetailsWidth(int width)
+        {
+            return SaveRegisterValue("CompletionDetailsWidth", Math.Max(220, Math.Min(900, width)).ToString());
         }
 
         public static SqlCompletionSettings GetSqlCompletionSettings()
